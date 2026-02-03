@@ -1,0 +1,74 @@
+# Socket Firewall Configuration - 8 CPUs / 8GB RAM
+# Optimized for maximum single-instance performance
+# Expected performance: ~150-170 req/s, 16384 concurrent connections
+# NOTE: Beyond 4 CPUs, consider horizontal scaling instead
+
+cache:
+  ttl: 600                       # Longer cache TTL
+
+keepalive_timeout: 65            # Standard keepalive
+
+nginx:
+  # Worker pool settings
+  worker_processes: 8            # Match CPU count
+  worker_connections: 2048       # Don't exceed 2048 per worker (diminishing returns)
+  worker_rlimit_nofile: 8192     # 8x increase from baseline
+
+  # Performance tuning
+  accept_mutex: on               # On for multiple workers
+  access_log_buffer: 256k        # 8x increase
+
+  # Open file cache - caches SSL certs, configs, static files
+  open_file_cache:
+    max: 4000                    # 8x increase
+    inactive: 180s               # Cache even longer
+
+  # Negative cache - caches upstream responses (including errors)
+  proxy_cache:
+    enabled: on
+    path: /tmp/nginx_cache
+    size: 400m                   # 8x increase
+    inactive: 180m               # Cache 3 hours
+    valid:
+      ok: 20m                    # Longer caching
+      notfound: 20m              # Longer 404 caching
+      error: 2m                  # Longer error caching
+
+  types_hash_max_size: 16384     # 8x increase
+  client_max_body_size: 500M     # Support very large uploads
+  gzip:
+    enabled: on
+    min_length: 1024
+
+lua:
+  cache_size: 40m                # 8x increase
+  stats_size: 4m                 # 8x increase
+
+proxy:
+  buffer_size: 64k               # 8x increase (very large metadata)
+  buffers_count: 32              # 8x increase
+  buffers_size: 64k              # 8x increase
+  busy_buffers_size: 128k        # 8x increase
+  connect_timeout: 90
+  send_timeout: 90
+  read_timeout: 90
+
+registries:
+  npm:
+    domains:
+      - npm.dougbot.ai
+  pypi:
+    domains:
+      - pypi.dougbot.ai
+  cargo:
+    domains:
+      - cargo.dougbot.ai
+  maven:
+    domains:
+      - maven.dougbot.ai
+  rubygems:
+    domains:
+      - gem.dougbot.ai
+  nuget:
+    domains:
+      - nuget.dougbot.ai

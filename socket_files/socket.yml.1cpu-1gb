@@ -1,0 +1,73 @@
+# Socket Firewall Configuration - 1 CPU / 1GB RAM
+# Optimized for minimal resource usage with maximum stability
+# Expected performance: ~31 req/s, 512 concurrent connections
+
+cache:
+  ttl: 300
+
+keepalive_timeout: 30
+
+nginx:
+  # Worker pool settings
+  worker_processes: 1
+  worker_connections: 512
+  worker_rlimit_nofile: 1024
+
+  # Performance tuning
+  accept_mutex: off              # Better for single worker (reduces latency)
+  access_log_buffer: 32k         # Buffer logs to reduce I/O
+
+  # Open file cache - caches SSL certs, configs, static files
+  open_file_cache:
+    max: 500                     # Max cached file handles
+    inactive: 30s                # Close unused files after 30s
+
+  # Negative cache - caches upstream responses (including errors)
+  proxy_cache:
+    enabled: on
+    path: /tmp/nginx_cache
+    size: 50m                    # Max cache disk usage
+    inactive: 30m                # Purge cached items after 30m of no use
+    valid:
+      ok: 5m                     # Cache successful responses for 5 minutes
+      notfound: 10m              # Cache 404s for 10 minutes
+      error: 30s                 # Cache 5xx errors for 30 seconds
+
+  types_hash_max_size: 2048
+  client_max_body_size: 100M
+  gzip:
+    enabled: on
+    min_length: 1024
+
+lua:
+  cache_size: 5m                 # Socket API response cache
+  stats_size: 512k               # Request statistics
+
+proxy:
+  buffer_size: 8k
+  buffers_count: 4
+  buffers_size: 8k
+  busy_buffers_size: 16k
+  connect_timeout: 90
+  send_timeout: 90
+  read_timeout: 90
+
+registries:
+  npm:
+    domains:
+      - npm.dougbot.ai
+  pypi:
+    domains:
+      - pypi.dougbot.ai
+  cargo:
+    domains:
+      - cargo.dougbot.ai
+  maven:
+    domains:
+      - maven.dougbot.ai
+  rubygems:
+    domains:
+      - gem.dougbot.ai
+  nuget:
+    domains:
+      - nuget.dougbot.ai

@@ -1,0 +1,252 @@
+# Socket Load Test Configuration Examples
+
+# Example 1: SSH with key-based authentication
+---
+infrastructure:
+  type: ssh
+  ssh:
+    firewall_server:
+      host: 192.168.1.100
+      port: 22
+      user: admin
+      key_file: ~/.ssh/id_rsa
+    load_generators:
+      - host: 192.168.1.101
+        port: 22
+        user: loadgen
+        key_file: ~/.ssh/id_rsa
+      - host: 192.168.1.102
+        port: 22
+        user: loadgen
+        key_file: ~/.ssh/id_rsa
+
+test:
+  rps: 1000
+  duration: 5m
+  test_id: test-001
+  warmup: true
+  warmup_duration: 30s
+  warmup_rps_percent: 10
+
+registries:
+  npm_url: http://192.168.1.100:3128/npm
+  pypi_url: http://192.168.1.100:3128/pypi
+  maven_url: http://192.168.1.100:3128/maven
+  cache_hit_percent: 30
+
+traffic:
+  cache_ratio: 30
+  npm_ratio: 40
+  pypi_ratio: 30
+  maven_ratio: 30
+  metadata_only: false
+
+monitoring:
+  enabled: true
+  interval_seconds: 5
+  node_exporter_port: 9100
+
+results:
+  output_dir: ./load-test-results
+  auto_generate_html: true
+  auto_aggregate: true
+
+---
+# Example 2: SSH with password authentication
+infrastructure:
+  type: ssh
+  ssh:
+    firewall_server:
+      host: 192.168.1.100
+      port: 22
+      user: admin
+      password: ${SFW_PASSWORD}  # Use environment variable
+    load_generators:
+      - host: 192.168.1.101
+        port: 22
+        user: loadgen
+        password: ${LOADGEN_PASSWORD}
+
+test:
+  rps: 5000
+  duration: 10m
+
+registries:
+  npm_url: http://192.168.1.100:3128/npm
+  pypi_url: http://192.168.1.100:3128/pypi
+  maven_url: http://192.168.1.100:3128/maven
+
+---
+# Example 3: Mixed authentication (some key, some password)
+infrastructure:
+  type: ssh
+  ssh:
+    firewall_server:
+      host: 192.168.1.100
+      port: 22
+      user: admin
+      key_file: ~/.ssh/firewall_key
+    load_generators:
+      - host: 192.168.1.101
+        port: 22
+        user: loadgen
+        key_file: ~/.ssh/id_rsa
+      - host: 192.168.1.102
+        port: 22
+        user: loadgen
+        password: ${LOADGEN2_PASSWORD}
+      - host: 192.168.1.103
+        port: 2222
+        user: ubuntu
+        key_file: ~/.ssh/id_rsa
+
+test:
+  rps: 10000
+  duration: 15m
+
+registries:
+  npm_url: http://192.168.1.100:3128/npm
+  pypi_url: http://192.168.1.100:3128/pypi
+  maven_url: http://192.168.1.100:3128/maven
+
+---
+# Example 4: Private Registry Authentication (NPM with Token)
+infrastructure:
+  type: ssh
+  ssh:
+    firewall_server:
+      host: 192.168.1.100
+      port: 22
+      user: admin
+      key_file: ~/.ssh/id_rsa
+    load_generators:
+      - host: 192.168.1.101
+        port: 22
+        user: loadgen
+        key_file: ~/.ssh/id_rsa
+
+test:
+  rps: 1000
+  duration: 5m
+  test_id: private-npm-test
+
+registries:
+  npm_url: https://npm.example.com
+  pypi_url: https://pypi.example.com
+  maven_url: https://maven.example.com
+  ecosystems: ['npm', 'pypi', 'maven']
+  
+  # NPM Authentication - Bearer Token
+  npm_token: ${NPM_TOKEN}  # Use environment variable
+  
+  # PyPI Authentication - Token
+  pypi_token: ${PYPI_TOKEN}
+  
+  # Maven Authentication - Username/Password
+  maven_username: ${MAVEN_USERNAME}
+  maven_password: ${MAVEN_PASSWORD}
+
+traffic:
+  npm_ratio: 40
+  pypi_ratio: 30
+  maven_ratio: 30
+
+---
+# Example 5: Private Registry with Basic Auth
+infrastructure:
+  type: ssh
+  ssh:
+    firewall_server:
+      host: 192.168.1.100
+      port: 22
+      user: admin
+      key_file: ~/.ssh/id_rsa
+    load_generators:
+      - host: 192.168.1.101
+        port: 22
+        user: loadgen
+        key_file: ~/.ssh/id_rsa
+
+test:
+  rps: 2000
+  duration: 10m
+  test_id: basic-auth-test
+
+registries:
+  npm_url: https://npm.private.com
+  pypi_url: https://pypi.private.com
+  maven_url: https://maven.private.com
+  ecosystems: ['npm', 'pypi', 'maven']
+  
+  # NPM Authentication - Basic Auth (username/password)
+  npm_username: ${NPM_USERNAME}
+  npm_password: ${NPM_PASSWORD}
+  
+  # PyPI Authentication - Basic Auth
+  pypi_username: ${PYPI_USERNAME}
+  pypi_password: ${PYPI_PASSWORD}
+  
+  # Maven Authentication - Basic Auth
+  maven_username: ${MAVEN_USERNAME}
+  maven_password: ${MAVEN_PASSWORD}
+
+traffic:
+  cache_ratio: 40
+  metadata_only: false
+
+---
+# Example 6: Mixed Authentication (Token for npm, Basic for others)
+infrastructure:
+  type: ssh
+  ssh:
+    firewall_server:
+      host: 192.168.1.100
+      port: 22
+      user: admin
+      key_file: ~/.ssh/id_rsa
+    load_generators:
+      - host: 192.168.1.101
+        port: 22
+        user: loadgen
+        key_file: ~/.ssh/id_rsa
+
+test:
+  rps: 5000
+  duration: 10m
+  test_id: mixed-auth-test
+
+registries:
+  npm_url: https://npm.private.com
+  pypi_url: https://pypi.private.com
+  maven_url: https://maven.private.com
+  ecosystems: ['npm', 'pypi', 'maven']
+  
+  # NPM uses Bearer Token
+  npm_token: ${NPM_TOKEN}
+  
+  # PyPI uses Basic Auth
+  pypi_username: pypi-user
+  pypi_password: ${PYPI_PASSWORD}
+  
+  # Maven uses Basic Auth
+  maven_username: maven-user
+  maven_password: ${MAVEN_PASSWORD}
+
+monitoring:
+  enabled: true
+  interval_seconds: 5
+
+results:
+  output_dir: ./private-registry-results
+  auto_generate_html: true
+        key_file: ~/.ssh/id_ed25519
+
+test:
+  rps: 10000
+  duration: 15m
+  warmup: true
+
+registries:
+  npm_url: http://192.168.1.100:3128/npm
+  pypi_url: http://192.168.1.100:3128/pypi
+  maven_url: http://192.168.1.100:3128/maven

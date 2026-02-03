@@ -1,0 +1,29 @@
+# Optimized configuration for 1 CPU / 1GB RAM / 40GB storage
+# This config reduces resource usage while maintaining reliability
+
+# Cache configuration - reduce memory footprint
+cache:
+  ttl: 300  # 5 minutes instead of 10 to reduce memory usage
+
+# Socket API configuration
+socket:
+  fail_open: true           # Allow downloads if Socket API is unavailable
+  telemetry_enabled: true
+
+# Proxy configuration - optimized for low resources
+proxy:
+  # Smaller buffers to reduce memory usage (total: 4 x 8k = 32k per request)
+  buffer_size: 8k
+  buffers_count: 4
+  buffers_size: 8k
+  
+  # Shorter timeouts to fail fast and free resources quickly
+  connect_timeout: 30     # Reduced from 60s
+  send_timeout: 30        # Reduced from 60s
+  read_timeout: 30        # Reduced from 60s
+
+# Additional nginx tuning (add to your nginx.conf or docker environment):
+# worker_processes: 1                    # Match your CPU count
+# worker_connections: 512                # Reduced from default 1024
+# keepalive_timeout: 30                  # Release connections faster
+# worker_rlimit_nofile: 2048            # Limit file descriptors

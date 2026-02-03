@@ -1,0 +1,6 @@
+include README.md
+include LICENSE
+include requirements.txt
+recursive-include socket_load_test/core/reporting/templates *
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]

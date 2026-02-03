@@ -1,0 +1,74 @@
+# Socket Firewall Configuration - 2 CPUs / 2GB RAM
+# Optimized for balanced performance with good resource efficiency
+# Expected performance: ~55-60 req/s, 2048 concurrent connections
+# RECOMMENDED: Best cost/performance ratio
+
+cache:
+  ttl: 300
+
+keepalive_timeout: 30
+
+nginx:
+  # Worker pool settings
+  worker_processes: 2            # Match CPU count
+  worker_connections: 1024       # 2x increase
+  worker_rlimit_nofile: 2048     # 2x increase
+
+  # Performance tuning
+  accept_mutex: on               # On for multiple workers (load balancing)
+  access_log_buffer: 64k         # 2x increase
+
+  # Open file cache - caches SSL certs, configs, static files
+  open_file_cache:
+    max: 1000                    # 2x increase
+    inactive: 60s                # Keep cached longer
+
+  # Negative cache - caches upstream responses (including errors)
+  proxy_cache:
+    enabled: on
+    path: /tmp/nginx_cache
+    size: 100m                   # 2x increase
+    inactive: 60m                # Cache longer with more memory
+    valid:
+      ok: 10m                    # 2x increase - cache longer
+      notfound: 10m              # Keep 404s cached
+      error: 30s                 # Keep errors short
+
+  types_hash_max_size: 4096      # 2x increase
+  client_max_body_size: 100M
+  gzip:
+    enabled: on
+    min_length: 1024
+
+lua:
+  cache_size: 10m                # 2x increase
+  stats_size: 1m                 # 2x increase
+
+proxy:
+  buffer_size: 16k               # 2x increase (back to default)
+  buffers_count: 8               # 2x increase (back to default)
+  buffers_size: 16k              # 2x increase (back to default)
+  busy_buffers_size: 32k         # 2x increase (back to default)
+  connect_timeout: 90
+  send_timeout: 90
+  read_timeout: 90
+
+registries:
+  npm:
+    domains:
+      - npm.dougbot.ai
+  pypi:
+    domains:
+      - pypi.dougbot.ai
+  cargo:
+    domains:
+      - cargo.dougbot.ai
+  maven:
+    domains:
+      - maven.dougbot.ai
+  rubygems:
+    domains:
+      - gem.dougbot.ai
+  nuget:
+    domains:
+      - nuget.dougbot.ai
