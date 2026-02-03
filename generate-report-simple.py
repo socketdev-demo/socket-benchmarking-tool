@@ -26,21 +26,43 @@ def main():
     
     test_id = sys.argv[1]
     
-    # Try to extract RPS from test_id if not provided
+    results_dir = './load-test-results'
+    
+    # Try to extract RPS from actual test results
     rps = None
+    duration_seconds = None
+    
     if len(sys.argv) > 2:
         rps = int(sys.argv[2])
     else:
-        # Try to guess from filename or default to 500
-        match = re.search(r'(\d+)rps', test_id.lower())
-        if match:
-            rps = int(match.group(1))
-        else:
-            print("Could not determine RPS from test ID. Defaulting to 500.")
-            print("Specify RPS manually: ./generate-report-simple.py test-id 1000")
-            rps = 500
-    
-    results_dir = './load-test-results'
+        # Try to read actual RPS from k6 summary file
+        import glob
+        summary_files = glob.glob(f"{results_dir}/{test_id}_*_k6_summary.txt")
+        if summary_files:
+            try:
+                with open(summary_files[0], 'r') as f:
+                    summary_data = json.load(f)
+                    # Get actual RPS from metrics
+                    if 'metrics' in summary_data and 'total_requests' in summary_data['metrics']:
+                        actual_rps = summary_data['metrics']['total_requests'].get('rate', 0)
+                        rps = int(round(actual_rps))
+                        print(f"Detected actual RPS from test results: {rps}")
+                    
+                    # Get duration from iterations metric
+                    if 'metrics' in summary_data and 'iterations' in summary_data['metrics']:
+                        duration_seconds = int(summary_data['metrics']['iterations'].get('count', 0) / actual_rps) if rps else None
+            except Exception as e:
+                print(f"Warning: Could not read RPS from summary file: {e}")
+        
+        if not rps:
+            # Try to guess from filename or default to 500
+            match = re.search(r'(\d+)rps', test_id.lower())
+            if match:
+                rps = int(match.group(1))
+            else:
+                print("Could not determine RPS from test results. Defaulting to 500.")
+                print("Specify RPS manually: ./generate-report-simple.py test-id 1000")
+                rps = 500
     
     print(f"Generating report for test: {test_id}")
     print(f"RPS: {rps}")
@@ -99,13 +121,25 @@ def main():
         print("=" * 60)
         print("SUCCESS!")
         print("=" * 60)
-        print("Report generated: load-test-report-5-minute.html")
+        
+        # Determine duration for filename
+        duration_label = "5-minute"  # default
+        if duration_seconds:
+            if duration_seconds < 90:
+                duration_label = f"{duration_seconds}-second"
+            else:
+                duration_minutes = int(round(duration_seconds / 60))
+                duration_label = f"{duration_minutes}-minute"
+        
+        report_filename = f"load-test-report-{duration_label}.html"
+        print(f"Report generated: {report_filename}")
+        print(f"Test: {test_id} | RPS: {rps} | Duration: ~{duration_label.replace('-', ' ')}")
         print("")
         print("Open it in your browser:")
-        print("  firefox load-test-report-5-minute.html")
+        print(f"  firefox {report_filename}")
         print("  # or")
         print("  python3 -m http.server 8000")
-        print("  # then visit http://localhost:8000/load-test-report-5-minute.html")
+        print(f"  # then visit http://localhost:8000/{report_filename}")
         print("")
         
     except subprocess.CalledProcessError as e:

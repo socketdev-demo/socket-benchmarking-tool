@@ -941,10 +941,40 @@ def main():
     with open(config_file, 'r') as f:
         test_configs = json.load(f)
     
-    # Determine test type from first test ID
-    test_type = "5-Minute"
-    if test_configs and "1h" in test_configs[0].get('test_id', '').lower():
-        test_type = "1-Hour"
+    # Determine actual test duration from results
+    test_type = "5-Minute"  # default
+    duration_seconds = None
+    
+    if test_configs:
+        test_id = test_configs[0].get('test_id', '')
+        
+        # Try to read duration from k6 summary file
+        summary_files = glob.glob(f"{results_dir}/{test_id}_*_k6_summary.txt")
+        if summary_files:
+            try:
+                with open(summary_files[0], 'r') as f:
+                    summary_data = json.load(f)
+                    if 'metrics' in summary_data and 'iterations' in summary_data['metrics']:
+                        iteration_count = summary_data['metrics']['iterations'].get('count', 0)
+                        iteration_rate = summary_data['metrics']['iterations'].get('rate', 0)
+                        if iteration_rate > 0:
+                            duration_seconds = int(iteration_count / iteration_rate)
+            except Exception as e:
+                print(f"Warning: Could not read duration from summary: {e}")
+        
+        # If we got a duration, format it appropriately
+        if duration_seconds:
+            if duration_seconds < 90:
+                test_type = f"{duration_seconds}-Second"
+            elif duration_seconds < 3600:
+                minutes = int(round(duration_seconds / 60))
+                test_type = f"{minutes}-Minute"
+            else:
+                hours = int(round(duration_seconds / 3600))
+                test_type = f"{hours}-Hour"
+        # Fallback to checking test_id string
+        elif "1h" in test_id.lower():
+            test_type = "1-Hour"
     
     output_file = f"load-test-report-{test_type.lower()}.html"
     
