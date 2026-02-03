@@ -948,19 +948,31 @@ def main():
     if test_configs:
         test_id = test_configs[0].get('test_id', '')
         
-        # Try to read duration from k6 summary file
-        summary_files = glob.glob(f"{results_dir}/{test_id}_*_k6_summary.txt")
-        if summary_files:
+        # Try to read duration from k6 results.json file (NDJSON format)
+        result_files = glob.glob(f"{results_dir}/{test_id}_*_k6_results.json")
+        if result_files:
             try:
-                with open(summary_files[0], 'r') as f:
-                    summary_data = json.load(f)
-                    if 'metrics' in summary_data and 'iterations' in summary_data['metrics']:
-                        iteration_count = summary_data['metrics']['iterations'].get('count', 0)
-                        iteration_rate = summary_data['metrics']['iterations'].get('rate', 0)
-                        if iteration_rate > 0:
-                            duration_seconds = int(iteration_count / iteration_rate)
+                first_ts = None
+                last_ts = None
+                with open(result_files[0], 'r') as f:
+                    for line in f:
+                        try:
+                            data = json.loads(line)
+                            if data.get('type') == 'Point' and 'time' in data.get('data', {}):
+                                ts = data['data']['time']
+                                if first_ts is None:
+                                    first_ts = ts
+                                last_ts = ts
+                        except:
+                            continue
+                
+                if first_ts and last_ts:
+                    from datetime import datetime
+                    start = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
+                    end = datetime.fromisoformat(last_ts.replace('Z', '+00:00'))
+                    duration_seconds = int((end - start).total_seconds())
             except Exception as e:
-                print(f"Warning: Could not read duration from summary: {e}")
+                print(f"Warning: Could not read duration from results file: {e}")
         
         # If we got a duration, format it appropriately
         if duration_seconds:
