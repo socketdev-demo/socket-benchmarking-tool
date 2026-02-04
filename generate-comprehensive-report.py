@@ -137,6 +137,15 @@ def analyze_k6_metrics(metrics):
         stats['error_rate'] = 0
         stats['total_errors'] = 0
     
+    # HTTP Status Code breakdown
+    from collections import Counter
+    status_codes = Counter()
+    for m in metrics.get('http_reqs', []):
+        status = m.get('tags', {}).get('status')
+        if status:
+            status_codes[status] += 1
+    stats['status_codes'] = dict(status_codes)
+    
     # Cache hit rate
     if 'cache_hits' in metrics:
         cache_values = [m['value'] for m in metrics['cache_hits']]
@@ -273,7 +282,7 @@ def format_duration(ms):
         return f"{ms / 1000:.2f}s"
 
 
-def generate_html_report(test_configs, results_dir, output_file, test_type="5-Minute"):
+def generate_html_report(test_configs, results_dir, output_file, test_type="5-Minute", duration_seconds=300):
     """Generate comprehensive HTML report"""
     
     print(f"Generating {test_type} Test Report...")
@@ -312,7 +321,7 @@ def generate_html_report(test_configs, results_dir, output_file, test_type="5-Mi
     all_test_data.sort(key=lambda x: x['rps'])
     
     # Generate HTML
-    html = generate_html_content(all_test_data, test_type)
+    html = generate_html_content(all_test_data, test_type, duration_seconds)
     
     # Write file
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -321,7 +330,7 @@ def generate_html_report(test_configs, results_dir, output_file, test_type="5-Mi
     print(f"Report generated: {output_file}")
 
 
-def generate_html_content(all_test_data, test_type):
+def generate_html_content(all_test_data, test_type, duration_seconds=300):
     """Generate HTML content for report"""
     
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -574,7 +583,7 @@ def generate_html_content(all_test_data, test_type):
     
     # Per-RPS sections
     for test_data in all_test_data:
-        html += generate_rps_section(test_data)
+        html += generate_rps_section(test_data, duration_seconds)
     
     # Footer
     html += '''
@@ -590,7 +599,7 @@ def generate_html_content(all_test_data, test_type):
     return html
 
 
-def generate_rps_section(test_data):
+def generate_rps_section(test_data, duration_seconds=300):
     """Generate HTML for a single RPS test section"""
     
     rps = test_data['rps']
@@ -606,15 +615,19 @@ def generate_rps_section(test_data):
     p95_latency = k6.get('http_req_duration', {}).get('p95', 0)
     p95_class = 'good' if p95_latency < 500 else ('warning' if p95_latency < 1000 else 'bad')
     
+    # Calculate achieved RPS from actual duration
+    total_requests = k6.get('total_requests', 0)
+    achieved_rps = total_requests // duration_seconds if duration_seconds > 0 else 0
+    
     html = f'''
         <div class="rps-section">
             <h2>{rps:,} Requests Per Second</h2>
             <div class="info-box">
                 <p><strong>Test ID:</strong> {test_id}</p>
                 <p><strong>Load Generators:</strong> {num_gens}</p>
-                <p><strong>Total Requests:</strong> {k6.get('total_requests', 0):,}</p>
+                <p><strong>Total Requests:</strong> {total_requests:,}</p>
                 <p><strong>Target RPS:</strong> {rps:,} req/s</p>
-                <p><strong>Achieved RPS:</strong> ~{k6.get('total_requests', 0) // 300:,} req/s (approx, based on 5min test)</p>
+                <p><strong>Achieved RPS:</strong> ~{achieved_rps:,} req/s (approx, based on {duration_seconds}s test)</p>
             </div>
             
             <h3>Performance Summary</h3>
@@ -652,6 +665,46 @@ def generate_rps_section(test_data):
                         <td>{k6.get('cache_hit_rate', 0) * 100:.2f}%</td>
                         <td class="good">✓ Expected</td>
                     </tr>
+                </tbody>
+            </table>
+'''
+    
+    # HTTP Status Code breakdown
+    status_codes = k6.get('status_codes', {})
+    if status_codes:
+        html += '''
+            <h3>HTTP Status Codes</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Status Code</th>
+                        <th>Count</th>
+                        <th>Percentage</th>
+                    </tr>
+                </thead>
+                <tbody>
+'''
+        total = sum(status_codes.values())
+        for status in sorted(status_codes.keys()):
+            count = status_codes[status]
+            pct = (count / total * 100) if total > 0 else 0
+            # 200 is good, 3xx redirects are warning, 403/404 are expected (good), other errors are bad
+            if status in ['200', '201', '204']:
+                status_class = 'good'
+            elif status in ['403', '404']:
+                status_class = 'good'  # Expected responses from firewall
+            elif status.startswith('3'):
+                status_class = 'warning'
+            else:
+                status_class = 'bad'
+            html += f'''
+                    <tr>
+                        <td class="{status_class}">{status}</td>
+                        <td>{count:,}</td>
+                        <td>{pct:.1f}%</td>
+                    </tr>
+'''
+        html += '''
                 </tbody>
             </table>
 '''
@@ -990,7 +1043,7 @@ def main():
     
     output_file = f"load-test-report-{test_type.lower()}.html"
     
-    generate_html_report(test_configs, results_dir, output_file, test_type)
+    generate_html_report(test_configs, results_dir, output_file, test_type, duration_seconds if duration_seconds else 300)
     
     print("")
     print(f"Report generated: {output_file}")
