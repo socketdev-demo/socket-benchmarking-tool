@@ -280,22 +280,27 @@ curl -I $MAVEN_URL/maven2/org/apache/maven/maven/
 
 ### 3. Private Registry Authentication
 
-The load test framework supports authentication for private registries across all 3 ecosystems (npm, PyPI, and Maven). Authentication can be configured using **Bearer tokens** or **Basic Authentication (username/password)**.
+The load test framework supports authentication for private registries across all 3 ecosystems (npm, PyPI, and Maven).
 
-**Supported Authentication Methods:**
+**Authentication Method Per Ecosystem:**
 
-| Ecosystem | Bearer Token | Basic Auth (username/password) |
-|-----------|--------------|-------------------------------|
-| **npm**   | ✅ Yes       | ✅ Yes                        |
-| **PyPI**  | ✅ Yes       | ✅ Yes                        |
-| **Maven** | ❌ No        | ✅ Yes                        |
+| Ecosystem | Token Auth Method | Username/Password Method | Details |
+|-----------|------------------|-------------------------|---------|
+| **npm**   | Basic Auth (recommended) | Basic Auth | Tokens use format: `Authorization: Basic base64(_token:token_value)` |
+| **PyPI**  | Basic Auth (recommended) | Basic Auth | Tokens use format: `Authorization: Basic base64(__token__:token_value)` |
+| **Maven** | N/A | Basic Auth only | Standard Basic authentication |
+
+**Important:** 
+- NPM tokens are sent using Basic authentication with the format `_token:YOUR_TOKEN` (base64 encoded)
+- PyPI tokens are sent using Basic authentication with the format `__token__:YOUR_TOKEN` (base64 encoded)
+- This matches the standard authentication methods used by npm and pip clients
 
 #### NPM Authentication
 
-**Option 1: Bearer Token (Recommended)**
+**Option 1: Token (Recommended)**
 ```bash
 # Via environment variable
-export NPM_TOKEN="your-npm-token-here"
+export NPM_TOKEN="npm_your-token-here"
 
 # Via CLI
 socket-load-test test \
@@ -309,6 +314,8 @@ registries:
   npm_url: "https://npm.private.com"
   npm_token: ${NPM_TOKEN}  # References environment variable
 ```
+
+**Note:** The npm token will be automatically encoded as `Basic base64(_token:YOUR_TOKEN)` in the Authorization header.
 
 **Option 2: Basic Authentication**
 ```bash
@@ -333,10 +340,10 @@ registries:
 
 #### PyPI Authentication
 
-**Option 1: Bearer Token**
+**Option 1: Token (Recommended)**
 ```bash
 # Via environment variable
-export PYPI_TOKEN="your-pypi-token"
+export PYPI_TOKEN="pypi-your-token-value"
 
 # Via CLI
 socket-load-test test \
@@ -350,6 +357,8 @@ registries:
   pypi_url: "https://pypi.private.com"
   pypi_token: ${PYPI_TOKEN}
 ```
+
+**Note:** The PyPI token will be automatically encoded as `Basic base64(__token__:YOUR_TOKEN)` in the Authorization header, which is the standard method used by pip.
 
 **Option 2: Basic Authentication**
 ```bash
@@ -427,14 +436,13 @@ registries:
   pypi_url: https://pypi.private.company.com
   maven_url: https://maven.private.company.com
   
-  # NPM Authentication (using Bearer token)
+  # NPM Authentication (Bearer token)
   npm_token: ${NPM_TOKEN}
   
-  # PyPI Authentication (using Basic auth)
-  pypi_username: ${PYPI_USERNAME}
-  pypi_password: ${PYPI_PASSWORD}
+  # PyPI Authentication (Basic auth with __token__: prefix)
+  pypi_token: ${PYPI_TOKEN}
   
-  # Maven Authentication (using Basic auth)
+  # Maven Authentication (Basic auth)
   maven_username: ${MAVEN_USERNAME}
   maven_password: ${MAVEN_PASSWORD}
   
@@ -620,28 +628,57 @@ Arguments:
 - `test-id`: The test identifier (from `--test-id` or auto-generated)
 - `rps`: Target RPS (optional, tries to auto-detect from test ID)
 
-#### Advanced Report
+#### Generate HTML Reports
 
-For multiple test comparisons, create a config file:
+Use the `--generate-html-report` flag to automatically create a comprehensive HTML report after test completion:
 
 ```bash
-cat > config.json <<EOF
-[
-  {"test_id": "test-20260109-150000", "rps": 500},
-  {"test_id": "test-20260109-160000", "rps": 1000},
-  {"test_id": "test-20260109-170000", "rps": 5000}
-]
+socket-load-test test \
+  --rps 1000 \
+  --duration 120s \
+  --base-url https://sfw.dougbot.ai \
+  --npm-path /npm \
+  --pypi-path /pypi \
+  --maven-path /maven \
+  --ecosystems npm,pypi,maven \
+  --no-docker \
+  --generate-html-report \
+  --html-report-path ./reports
+```
+
+#### Custom Package Lists
+
+Use the `--packages` flag to specify custom packages to test instead of the defaults:
+
+```bash
+# Create a custom packages file
+cat > my-packages.json <<EOF
+{
+  "npm": ["react", "vue", "express", "lodash"],
+  "pypi": ["requests", "flask", "django"],
+  "maven": ["org.springframework.boot:spring-boot-starter-web"]
+}
 EOF
 
-python3 generate-comprehensive-report.py config.json ./load-test-results
+socket-load-test test \
+  --rps 100 \
+  --duration 60s \
+  --base-url https://sfw.dougbot.ai \
+  --npm-path /npm \
+  --ecosystems npm \
+  --no-docker \
+  --packages my-packages.json \
+  --verbose
 ```
+
+The `--verbose` flag shows which packages and versions will be tested before the test begins.
 
 Opens in browser:
 ```bash
-firefox load-test-report-5-minute.html
+firefox reports/load-test-report-2-minute.html
 # or
 python3 -m http.server 8000
-# Then visit: http://localhost:8000/load-test-report-5-minute.html
+# Then visit: http://localhost:8000/reports/load-test-report-2-minute.html
 ```
 
 ### Viewing Results
@@ -763,8 +800,8 @@ sudo ufw status | grep 9100
 ### k6 errors
 ```bash
 # Check connectivity
-curl -I https://npm.dougbot.ai/react
-curl -I https://pypi.dougbot.ai/simple/requests/
+curl -I https://sfw.dougbot.ai/npm/react
+curl -I https://sfw.dougbot.ai/pypi/simple/requests/
 
 # Verify k6 installation
 k6 version

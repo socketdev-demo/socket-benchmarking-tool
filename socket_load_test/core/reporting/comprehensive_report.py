@@ -1,11 +1,10 @@
-#!/usr/bin/env python3
 """
 Comprehensive Load Test Report Generator for Socket Firewall
 Generates detailed HTML reports with system metrics, graphs, and per-RPS sections
 """
 
 import json
-import sys
+import os
 import glob
 from pathlib import Path
 from collections import defaultdict
@@ -28,6 +27,11 @@ def parse_k6_json(filepath):
                 value = data.get('data', {}).get('value')
                 tags = data.get('data', {}).get('tags', {})
                 timestamp = data.get('data', {}).get('time')
+                
+                # EXCLUDE setup phase metrics - only include load test metrics
+                group = tags.get('group', '')
+                if group == '::setup':
+                    continue
                 
                 if metric_name and value is not None:
                     metrics[metric_name].append({
@@ -84,6 +88,18 @@ def calculate_percentile(values, percentile):
     return sorted_values[index]
 
 
+def format_bytes(bytes_value):
+    """Format bytes into human-readable format (KB, MB, GB)"""
+    if bytes_value < 1024:
+        return f"{bytes_value:.0f} B"
+    elif bytes_value < 1024 * 1024:
+        return f"{bytes_value / 1024:.2f} KB"
+    elif bytes_value < 1024 * 1024 * 1024:
+        return f"{bytes_value / (1024 * 1024):.2f} MB"
+    else:
+        return f"{bytes_value / (1024 * 1024 * 1024):.2f} GB"
+
+
 def analyze_k6_metrics(metrics):
     """Analyze k6 metrics and return statistics"""
     stats = {}
@@ -96,6 +112,7 @@ def analyze_k6_metrics(metrics):
             'max': max(durations),
             'avg': statistics.mean(durations),
             'median': statistics.median(durations),
+            'p10': calculate_percentile(durations, 10),
             'p50': calculate_percentile(durations, 50),
             'p75': calculate_percentile(durations, 75),
             'p90': calculate_percentile(durations, 90),
@@ -109,6 +126,9 @@ def analyze_k6_metrics(metrics):
         latencies = [m['value'] for m in metrics['metadata_latency']]
         stats['metadata_latency'] = {
             'avg': statistics.mean(latencies),
+            'p10': calculate_percentile(latencies, 10),
+            'p50': calculate_percentile(latencies, 50),
+            'p75': calculate_percentile(latencies, 75),
             'p95': calculate_percentile(latencies, 95),
             'p99': calculate_percentile(latencies, 99),
         }
@@ -118,9 +138,122 @@ def analyze_k6_metrics(metrics):
         latencies = [m['value'] for m in metrics['download_latency']]
         stats['download_latency'] = {
             'avg': statistics.mean(latencies),
+            'p10': calculate_percentile(latencies, 10),
+            'p50': calculate_percentile(latencies, 50),
+            'p75': calculate_percentile(latencies, 75),
             'p95': calculate_percentile(latencies, 95),
             'p99': calculate_percentile(latencies, 99),
         }
+    
+    # Metadata request duration (separate from http_req_duration to exclude downloads)
+    if 'metadata_request_duration' in metrics:
+        durations = [m['value'] for m in metrics['metadata_request_duration']]
+        # Count timeouts (requests at or near timeout threshold)
+        # Note: setup uses 30s, metadata uses 60s, downloads use 120s
+        timeout_threshold = 59900  # 59.9s to catch 60s timeouts
+        timeout_count = sum(1 for d in durations if d >= timeout_threshold)
+        timeout_percentage = (timeout_count / len(durations) * 100) if durations else 0
+        
+        stats['metadata_request_duration'] = {
+            'min': min(durations),
+            'max': max(durations),
+            'avg': statistics.mean(durations),
+            'median': statistics.median(durations),
+            'p10': calculate_percentile(durations, 10),
+            'p50': calculate_percentile(durations, 50),
+            'p75': calculate_percentile(durations, 75),
+            'p90': calculate_percentile(durations, 90),
+            'p95': calculate_percentile(durations, 95),
+            'p99': calculate_percentile(durations, 99),
+            'stddev': statistics.stdev(durations) if len(durations) > 1 else 0,
+            'timeout_count': timeout_count,
+            'timeout_percentage': timeout_percentage,
+        }
+    
+    # Download request duration (separate from http_req_duration)
+    if 'download_request_duration' in metrics:
+        durations = [m['value'] for m in metrics['download_request_duration']]
+        stats['download_request_duration'] = {
+            'min': min(durations),
+            'max': max(durations),
+            'avg': statistics.mean(durations),
+            'median': statistics.median(durations),
+            'p10': calculate_percentile(durations, 10),
+            'p50': calculate_percentile(durations, 50),
+            'p75': calculate_percentile(durations, 75),
+            'p90': calculate_percentile(durations, 90),
+            'p95': calculate_percentile(durations, 95),
+            'p99': calculate_percentile(durations, 99),
+            'stddev': statistics.stdev(durations) if len(durations) > 1 else 0,
+        }
+        
+        # Calculate download speeds from duration and bandwidth
+        # Speed = bytes / seconds
+        # Both metrics are emitted together in the same order, so match by index
+        if 'response_bytes' in metrics:
+            # Get download bytes in order
+            download_bytes_list = [m for m in metrics['response_bytes'] 
+                                  if m.get('tags', {}).get('type') == 'download']
+            
+            download_durations_list = list(metrics['download_request_duration'])
+            
+            # Match by index since they're emitted in the same order
+            if download_bytes_list and download_durations_list and len(download_bytes_list) == len(download_durations_list):
+                speeds = []
+                # Size buckets: <100KB, 100KB-1MB, 1-10MB, >10MB
+                size_buckets = {
+                    '<100KB': {'sizes': [], 'durations': [], 'speeds': []},
+                    '100KB-1MB': {'sizes': [], 'durations': [], 'speeds': []},
+                    '1-10MB': {'sizes': [], 'durations': [], 'speeds': []},
+                    '>10MB': {'sizes': [], 'durations': [], 'speeds': []},
+                }
+                
+                for i in range(len(download_bytes_list)):
+                    bytes_transferred = download_bytes_list[i]['value']
+                    duration_ms = download_durations_list[i]['value']
+                    
+                    if duration_ms > 0:
+                        duration_s = duration_ms / 1000  # convert ms to seconds
+                        speed_bps = bytes_transferred / duration_s  # bytes per second
+                        speeds.append(speed_bps)
+                        
+                        # Categorize by size bucket
+                        if bytes_transferred < 100 * 1024:  # <100KB
+                            bucket = '<100KB'
+                        elif bytes_transferred < 1024 * 1024:  # 100KB-1MB
+                            bucket = '100KB-1MB'
+                        elif bytes_transferred < 10 * 1024 * 1024:  # 1-10MB
+                            bucket = '1-10MB'
+                        else:  # >10MB
+                            bucket = '>10MB'
+                        
+                        size_buckets[bucket]['sizes'].append(bytes_transferred)
+                        size_buckets[bucket]['durations'].append(duration_ms)
+                        size_buckets[bucket]['speeds'].append(speed_bps)
+                
+                if speeds:
+                    stats['download_speed'] = {
+                        'avg': statistics.mean(speeds),
+                        'min': min(speeds),
+                        'max': max(speeds),
+                        'p10': calculate_percentile(speeds, 10),
+                        'p50': calculate_percentile(speeds, 50),
+                        'p75': calculate_percentile(speeds, 75),
+                        'p95': calculate_percentile(speeds, 95),
+                        'p99': calculate_percentile(speeds, 99),
+                    }
+                
+                # Calculate statistics per bucket
+                stats['download_size_buckets'] = {}
+                for bucket_name, bucket_data in size_buckets.items():
+                    if bucket_data['sizes']:
+                        stats['download_size_buckets'][bucket_name] = {
+                            'count': len(bucket_data['sizes']),
+                            'avg_size': statistics.mean(bucket_data['sizes']),
+                            'avg_duration': statistics.mean(bucket_data['durations']),
+                            'avg_speed': statistics.mean(bucket_data['speeds']),
+                            'p95_duration': calculate_percentile(bucket_data['durations'], 95),
+                        }
     
     # Request counts
     stats['total_requests'] = len(metrics.get('http_reqs', []))
@@ -140,11 +273,38 @@ def analyze_k6_metrics(metrics):
     # HTTP Status Code breakdown
     from collections import Counter
     status_codes = Counter()
+    timeout_count = 0
+    total_requests = 0
     for m in metrics.get('http_reqs', []):
         status = m.get('tags', {}).get('status')
         if status:
             status_codes[status] += 1
+            total_requests += 1
+            if status == '0':
+                timeout_count += 1
     stats['status_codes'] = dict(status_codes)
+    stats['timeout_rate'] = (timeout_count / total_requests * 100) if total_requests > 0 else 0
+    stats['timeout_count'] = timeout_count
+    
+    # Parse new status code counters
+    # These are Counter metrics that track specific status code categories
+    stats['status_2xx_count'] = sum(m['value'] for m in metrics.get('status_2xx', []))
+    stats['status_404_count'] = sum(m['value'] for m in metrics.get('status_404', []))
+    stats['status_403_count'] = sum(m['value'] for m in metrics.get('status_403', []))
+    stats['status_4xx_count'] = sum(m['value'] for m in metrics.get('status_4xx', []))  # Other 4xx errors
+    stats['status_5xx_count'] = sum(m['value'] for m in metrics.get('status_5xx', []))
+    stats['status_timeout_count'] = sum(m['value'] for m in metrics.get('status_timeout', []))
+    
+    # Calculate totals for reporting
+    total_counted = (stats['status_2xx_count'] + stats['status_404_count'] + 
+                     stats['status_403_count'] + stats['status_4xx_count'] + 
+                     stats['status_5xx_count'] + stats['status_timeout_count'])
+    if total_counted > 0:
+        stats['status_404_pct'] = (stats['status_404_count'] / total_counted) * 100
+        stats['status_403_pct'] = (stats['status_403_count'] / total_counted) * 100
+    else:
+        stats['status_404_pct'] = 0
+        stats['status_403_pct'] = 0
     
     # Cache hit rate
     if 'cache_hits' in metrics:
@@ -152,6 +312,30 @@ def analyze_k6_metrics(metrics):
         stats['cache_hit_rate'] = statistics.mean(cache_values) if cache_values else 0
     else:
         stats['cache_hit_rate'] = 0
+    
+    # Bandwidth tracking using custom response_bytes Trend metric
+    # Trend metrics preserve request tags (type: 'metadata' or 'download')
+    if 'response_bytes' in metrics:
+        # Separate metadata vs download bandwidth using request type tags
+        metadata_bytes = sum(m['value'] for m in metrics['response_bytes'] 
+                           if m.get('tags', {}).get('type') == 'metadata')
+        download_bytes = sum(m['value'] for m in metrics['response_bytes'] 
+                          if m.get('tags', {}).get('type') == 'download')
+        total_bytes = sum(m['value'] for m in metrics['response_bytes'])
+        
+        stats['metadata_bytes'] = metadata_bytes
+        stats['download_bytes'] = download_bytes
+        stats['total_bytes'] = total_bytes
+    # Fallback to data_received if response_bytes not available (old tests)
+    elif 'data_received' in metrics:
+        total_bytes = sum(m['value'] for m in metrics['data_received'])
+        stats['metadata_bytes'] = 0
+        stats['download_bytes'] = 0
+        stats['total_bytes'] = total_bytes
+    else:
+        stats['metadata_bytes'] = 0
+        stats['download_bytes'] = 0
+        stats['total_bytes'] = 0
     
     return stats
 
@@ -509,7 +693,7 @@ def generate_html_content(all_test_data, test_type, duration_seconds=300):
             <h2>Test Overview</h2>
             <p><strong>Test Type:</strong> ''' + test_type + ''' Load Test</p>
             <p><strong>Purpose:</strong> Evaluate Socket Firewall performance under sustained load across multiple RPS levels</p>
-            <p><strong>Ecosystems Tested:</strong> npm (npm.dougbot.ai), PyPI (pypi.dougbot.ai), Maven (maven.dougbot.ai)</p>
+            <p><strong>Ecosystems Tested:</strong> npm (sfw.dougbot.ai/npm), PyPI (sfw.dougbot.ai/pypi), Maven (sfw.dougbot.ai/maven)</p>
             <p><strong>Traffic Mix:</strong> 40% metadata requests, 60% package downloads</p>
             <p><strong>Cache Simulation:</strong> 30% cache hits using popular packages</p>
             <p><strong>RPS Levels:</strong> ''' + ', '.join(rps_list) + ''' requests/second</p>
@@ -535,9 +719,9 @@ def generate_html_content(all_test_data, test_type, duration_seconds=300):
     html += '''
             <p><strong>Registry URLs:</strong></p>
             <ul style="margin-left: 20px;">
-                <li>npm: https://npm.dougbot.ai</li>
-                <li>PyPI: https://pypi.dougbot.ai</li>
-                <li>Maven: https://maven.dougbot.ai</li>
+                <li>npm: https://sfw.dougbot.ai/npm</li>
+                <li>PyPI: https://sfw.dougbot.ai/pypi</li>
+                <li>Maven: https://sfw.dougbot.ai/maven</li>
             </ul>
             <p><strong>Traffic Distribution:</strong></p>
             <ul style="margin-left: 20px;">
@@ -559,6 +743,9 @@ def generate_html_content(all_test_data, test_type, duration_seconds=300):
     total_errors = sum(d['k6_stats'].get('total_errors', 0) for d in all_test_data)
     avg_error_rate = statistics.mean([d['k6_stats'].get('error_rate', 0) * 100 for d in all_test_data])
     max_rps = max(d['rps'] for d in all_test_data)
+    total_bandwidth = sum(d['k6_stats'].get('total_bytes', 0) for d in all_test_data)
+    metadata_bandwidth = sum(d['k6_stats'].get('metadata_bytes', 0) for d in all_test_data)
+    download_bandwidth = sum(d['k6_stats'].get('download_bytes', 0) for d in all_test_data)
     
     html += f'''
         <div class="summary-grid">
@@ -577,6 +764,18 @@ def generate_html_content(all_test_data, test_type, duration_seconds=300):
             <div class="metric-card">
                 <h3>Avg Error Rate</h3>
                 <div class="value">{avg_error_rate:.2f}<span class="unit">%</span></div>
+            </div>
+            <div class="metric-card">
+                <h3>Total Bandwidth</h3>
+                <div class="value">{format_bytes(total_bandwidth)}</div>
+            </div>
+            <div class="metric-card">
+                <h3>Metadata Traffic</h3>
+                <div class="value">{format_bytes(metadata_bandwidth)}</div>
+            </div>
+            <div class="metric-card">
+                <h3>Download Traffic</h3>
+                <div class="value">{format_bytes(download_bandwidth)}</div>
             </div>
         </div>
 '''
@@ -612,8 +811,58 @@ def generate_rps_section(test_data, duration_seconds=300):
     error_rate = k6.get('error_rate', 0) * 100
     error_class = 'good' if error_rate < 1 else ('warning' if error_rate < 5 else 'bad')
     
-    p95_latency = k6.get('http_req_duration', {}).get('p95', 0)
-    p95_class = 'good' if p95_latency < 500 else ('warning' if p95_latency < 1000 else 'bad')
+    timeout_rate = k6.get('timeout_rate', 0)
+    timeout_class = 'good' if timeout_rate < 1 else ('warning' if timeout_rate < 10 else 'bad')
+    
+    # Use metadata_request_duration for API performance if available (fallback to http_req_duration)
+    metadata_duration = k6.get('metadata_request_duration', k6.get('http_req_duration', {}))
+    p75_latency = metadata_duration.get('p75', 0)
+    p75_class = 'good' if p75_latency < 500 else ('warning' if p75_latency < 1000 else 'bad')
+    
+    # P95/P99 status - check if hitting timeout threshold
+    # Note: setup uses 30s, metadata uses 60s, downloads use 120s
+    p95_latency = metadata_duration.get('p95', 0)
+    p99_latency = metadata_duration.get('p99', 0)
+    timeout_threshold_ms = 59900  # 59.9s in milliseconds for 60s metadata timeout
+    
+    # P95 status
+    if p95_latency >= timeout_threshold_ms:
+        p95_class = 'bad'
+        p95_status = '✗ Timeout'
+        p95_is_timeout = True
+    elif p95_latency >= 20000:  # 20s+
+        p95_class = 'bad'
+        p95_status = '✗ Poor'
+        p95_is_timeout = False
+    elif p95_latency >= 15000:  # 15-20s
+        p95_class = 'warning'
+        p95_status = '⚠ Warning'
+        p95_is_timeout = False
+    else:
+        p95_class = 'good'
+        p95_status = '✓ Good'
+        p95_is_timeout = False
+    
+    # P99 status
+    if p99_latency >= timeout_threshold_ms:
+        p99_class = 'bad'
+        p99_status = '✗ Timeout'
+        p99_is_timeout = True
+    elif p99_latency >= 20000:  # 20s+
+        p99_class = 'bad'
+        p99_status = '✗ Poor'
+        p99_is_timeout = False
+    elif p99_latency >= 15000:  # 15-20s
+        p99_class = 'warning'
+        p99_status = '⚠ Warning'
+        p99_is_timeout = False
+    else:
+        p99_class = 'good'
+        p99_status = '✓ Good'
+        p99_is_timeout = False
+    
+    # Get timeout percentage if available
+    timeout_pct = metadata_duration.get('timeout_percentage', 0)
     
     # Calculate achieved RPS from actual duration
     total_requests = k6.get('total_requests', 0)
@@ -641,39 +890,297 @@ def generate_rps_section(test_data, duration_seconds=300):
                 </thead>
                 <tbody>
                     <tr>
-                        <td>Error Rate</td>
+                        <td>Server Error Rate</td>
                         <td class="{error_class}">{error_rate:.2f}%</td>
                         <td class="{error_class}">{'✓ Good' if error_rate < 1 else ('⚠ Warning' if error_rate < 5 else '✗ Poor')}</td>
                     </tr>
                     <tr>
-                        <td>Avg Response Time</td>
-                        <td>{format_duration(k6.get('http_req_duration', {}).get('avg', 0))}</td>
-                        <td class="good">✓ Good</td>
-                    </tr>
-                    <tr>
-                        <td>P95 Response Time</td>
-                        <td class="{p95_class}">{format_duration(p95_latency)}</td>
-                        <td class="{p95_class}">{'✓ Good' if p95_latency < 500 else ('⚠ Warning' if p95_latency < 1000 else '✗ Poor')}</td>
-                    </tr>
-                    <tr>
-                        <td>P99 Response Time</td>
-                        <td>{format_duration(k6.get('http_req_duration', {}).get('p99', 0))}</td>
-                        <td>-</td>
+                        <td>Timeout Rate</td>
+                        <td class="{timeout_class}">{timeout_rate:.2f}%</td>
+                        <td class="{timeout_class}">{'✓ Good' if timeout_rate < 1 else ('⚠ Warning' if timeout_rate < 10 else '✗ Poor')}</td>
                     </tr>
                     <tr>
                         <td>Cache Hit Rate</td>
                         <td>{k6.get('cache_hit_rate', 0) * 100:.2f}%</td>
                         <td class="good">✓ Expected</td>
                     </tr>
+                    <tr>
+                        <td>Total Bandwidth</td>
+                        <td>{format_bytes(k6.get('total_bytes', 0))}</td>
+                        <td>-</td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h3>Metadata API Performance</h3>
+            <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">
+                <em>Metadata requests include package info, search, and JSON API calls (excludes tarball/wheel/JAR downloads)</em>
+            </p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th>Value</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Avg Response Time</td>
+                        <td>{format_duration(metadata_duration.get('avg', 0))}</td>
+                        <td class="good">✓ Good</td>
+                    </tr>
+                    <tr>
+                        <td>P50 Response Time</td>
+                        <td>{format_duration(metadata_duration.get('p50', 0))}</td>
+                        <td>-</td>
+                    </tr>
+                    <tr>
+                        <td>P75 Response Time</td>
+                        <td class="{p75_class}">{format_duration(p75_latency)}</td>
+                        <td class="{p75_class}">{'✓ Good' if p75_latency < 500 else ('⚠ Warning' if p75_latency < 1000 else '✗ Poor')}</td>
+                    </tr>
+                    <tr>
+                        <td>P95 Response Time</td>
+                        <td class="{p95_class}">{format_duration(p95_latency)}</td>
+                        <td class="{p95_class}">{p95_status}</td>
+                    </tr>'''
+    
+    # Only show P99 if P95 is not at timeout threshold
+    if not p95_is_timeout:
+        html += f'''
+                    <tr>
+                        <td>P99 Response Time</td>
+                        <td class="{p99_class}">{format_duration(p99_latency)}</td>
+                        <td class="{p99_class}">{p99_status}</td>
+                    </tr>'''
+    
+    html += f'''
+                    <tr>
+                        <td>Metadata Traffic</td>
+                        <td>{format_bytes(k6.get('metadata_bytes', 0))}</td>
+                        <td>-</td>
+                    </tr>
+                </tbody>
+            </table>'''
+    
+    # Add timeout warning if applicable
+    if timeout_pct > 0:
+        html += f'''
+            <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 10px; margin: 10px 0;">
+                <strong>⚠ Timeout Warning:</strong> {timeout_pct:.1f}% of metadata requests are timing out at 60 seconds. 
+                This indicates severe performance issues that need immediate investigation.
+            </div>'''
+    
+    html += '''
+'''
+    
+    # Download performance section (only if downloads occurred)
+    download_duration = k6.get('download_request_duration', {})
+    if download_duration:
+        download_speed = k6.get('download_speed', {})
+        download_buckets = k6.get('download_size_buckets', {})
+        
+        html += f'''
+            <h3>Download Performance</h3>
+            <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">
+                <em>Download requests include tarballs, wheels, and JAR files</em>
+            </p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Metric</th>
+                        <th>Value</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Avg Download Time</td>
+                        <td>{format_duration(download_duration.get('avg', 0))}</td>
+                        <td>-</td>
+                    </tr>
+                    <tr>
+                        <td>P50 Download Time</td>
+                        <td>{format_duration(download_duration.get('p50', 0))}</td>
+                        <td>-</td>
+                    </tr>
+                    <tr>
+                        <td>P75 Download Time</td>
+                        <td>{format_duration(download_duration.get('p75', 0))}</td>
+                        <td>-</td>
+                    </tr>
+                    <tr>
+                        <td>P99 Download Time</td>
+                        <td>{format_duration(download_duration.get('p99', 0))}</td>
+                        <td>-</td>
+                    </tr>
+                    <tr>
+                        <td>Download Traffic</td>
+                        <td>{format_bytes(k6.get('download_bytes', 0))}</td>
+                        <td>-</td>
+                    </tr>'''
+        
+        if download_speed:
+            html += f'''
+                    <tr>
+                        <td>Avg Download Speed</td>
+                        <td>{format_bytes(download_speed.get('avg', 0))}/s</td>
+                        <td>-</td>
+                    </tr>
+                    <tr>
+                        <td>P75 Download Speed</td>
+                        <td>{format_bytes(download_speed.get('p75', 0))}/s</td>
+                        <td>-</td>
+                    </tr>'''
+        
+        html += '''
+                </tbody>
+            </table>
+'''
+        
+        # Add size bucket breakdown if available
+        if download_buckets:
+            html += '''
+            <h4>Download Performance by File Size</h4>
+            <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">
+                <em>Performance metrics grouped by download size ranges</em>
+            </p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Size Range</th>
+                        <th>Count</th>
+                        <th>Avg Size</th>
+                        <th>Avg Time</th>
+                        <th>P95 Time</th>
+                        <th>Avg Speed</th>
+                    </tr>
+                </thead>
+                <tbody>
+'''
+            # Display buckets in order: <100KB, 100KB-1MB, 1-10MB, >10MB
+            bucket_order = ['<100KB', '100KB-1MB', '1-10MB', '>10MB']
+            for bucket_name in bucket_order:
+                if bucket_name in download_buckets:
+                    bucket = download_buckets[bucket_name]
+                    html += f'''
+                    <tr>
+                        <td><strong>{bucket_name}</strong></td>
+                        <td>{bucket['count']:,}</td>
+                        <td>{format_bytes(bucket['avg_size'])}</td>
+                        <td>{format_duration(bucket['avg_duration'])}</td>
+                        <td>{format_duration(bucket['p95_duration'])}</td>
+                        <td>{format_bytes(bucket['avg_speed'])}/s</td>
+                    </tr>'''
+            
+            html += '''
                 </tbody>
             </table>
 '''
     
-    # HTTP Status Code breakdown
+    # HTTP Status Code breakdown - NEW categorized metrics
+    # Show the new categorized counters if available
+    status_2xx = k6.get('status_2xx_count', 0)
+    status_404 = k6.get('status_404_count', 0)
+    status_403 = k6.get('status_403_count', 0)
+    status_4xx = k6.get('status_4xx_count', 0)
+    status_5xx = k6.get('status_5xx_count', 0)
+    status_timeout = k6.get('status_timeout_count', 0)
+    
+    if status_2xx + status_404 + status_403 + status_4xx + status_5xx + status_timeout > 0:
+        total_status_counts = status_2xx + status_404 + status_403 + status_4xx + status_5xx + status_timeout
+        html += '''
+            <h3>HTTP Status Code Summary</h3>
+            <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">
+                <strong>Note:</strong> 404 (Not Found) and 403 (Forbidden) are expected responses and are <strong>not counted as errors</strong>.<br>
+                Only 5xx (Server Errors) and other 4xx errors are counted in the Server Error Rate above.<br>
+                Timeouts (status 0) indicate the request exceeded k6's timeout limit.
+            </p>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Count</th>
+                        <th>Percentage</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+'''
+        if status_2xx > 0:
+            pct = (status_2xx / total_status_counts * 100)
+            html += f'''
+                    <tr>
+                        <td class="good">2xx Success</td>
+                        <td>{status_2xx:,}</td>
+                        <td>{pct:.1f}%</td>
+                        <td class="good">✓ Success</td>
+                    </tr>
+'''
+        if status_404 > 0:
+            pct = (status_404 / total_status_counts * 100)
+            html += f'''
+                    <tr>
+                        <td class="good">404 Not Found</td>
+                        <td>{status_404:,}</td>
+                        <td>{pct:.1f}%</td>
+                        <td class="good">✓ Expected</td>
+                    </tr>
+'''
+        if status_403 > 0:
+            pct = (status_403 / total_status_counts * 100)
+            html += f'''
+                    <tr>
+                        <td class="good">403 Forbidden</td>
+                        <td>{status_403:,}</td>
+                        <td>{pct:.1f}%</td>
+                        <td class="good">✓ Expected</td>
+                    </tr>
+'''
+        if status_4xx > 0:
+            pct = (status_4xx / total_status_counts * 100)
+            html += f'''
+                    <tr>
+                        <td class="bad">4xx Other Client Errors</td>
+                        <td>{status_4xx:,}</td>
+                        <td>{pct:.1f}%</td>
+                        <td class="bad">✗ Error</td>
+                    </tr>
+'''
+        if status_5xx > 0:
+            pct = (status_5xx / total_status_counts * 100)
+            html += f'''
+                    <tr>
+                        <td class="bad">5xx Server Errors</td>
+                        <td>{status_5xx:,}</td>
+                        <td>{pct:.1f}%</td>
+                        <td class="bad">✗ Error</td>
+                    </tr>
+'''
+        if status_timeout > 0:
+            pct = (status_timeout / total_status_counts * 100)
+            html += f'''
+                    <tr>
+                        <td class="warning">Timeouts (status 0)</td>
+                        <td>{status_timeout:,}</td>
+                        <td>{pct:.1f}%</td>
+                        <td class="warning">⚠ Timeout</td>
+                    </tr>
+'''
+        html += '''
+                </tbody>
+            </table>
+'''
+    
+    # HTTP Status Code breakdown - old detailed view (fallback for older test results)
     status_codes = k6.get('status_codes', {})
     if status_codes:
         html += '''
-            <h3>HTTP Status Codes</h3>
+            <h3>HTTP Status Codes (Detailed)</h3>
+            <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">
+                <strong>Note:</strong> Status code 0 indicates client-side timeout (request exceeded k6's timeout limit).
+            </p>
             <table>
                 <thead>
                     <tr>
@@ -688,6 +1195,8 @@ def generate_rps_section(test_data, duration_seconds=300):
         for status in sorted(status_codes.keys()):
             count = status_codes[status]
             pct = (count / total * 100) if total > 0 else 0
+            # Display friendly label for status 0 (timeouts)
+            status_label = '0 (Timeout)' if status == '0' else status
             # 200 is good, 3xx redirects are warning, 403/404 are expected (good), other errors are bad
             if status in ['200', '201', '204']:
                 status_class = 'good'
@@ -699,7 +1208,7 @@ def generate_rps_section(test_data, duration_seconds=300):
                 status_class = 'bad'
             html += f'''
                     <tr>
-                        <td class="{status_class}">{status}</td>
+                        <td class="{status_class}">{status_label}</td>
                         <td>{count:,}</td>
                         <td>{pct:.1f}%</td>
                     </tr>
@@ -782,19 +1291,28 @@ def generate_rps_section(test_data, duration_seconds=300):
 '''
     
     # Response time details
-    req_duration = k6.get('http_req_duration', {})
-    metadata = k6.get('metadata_latency', {})
-    download = k6.get('download_latency', {})
+    metadata_duration = k6.get('metadata_request_duration', k6.get('http_req_duration', {}))
+    download_duration = k6.get('download_request_duration', {})
     
     html += f'''
             <h3>Response Time Details</h3>
+            <p style="font-size: 0.9em; color: #666; margin-bottom: 10px;">
+                <em>Percentile values show the maximum time for the specified percentage of requests:</em><br>
+                <em>• P10 = 10% of requests completed in ≤ this time</em><br>
+                <em>• P50 (Median) = 50% of requests completed in ≤ this time</em><br>
+                <em>• P75 = 75% of requests completed in ≤ this time</em><br>
+                <em>• P95 = 95% of requests completed in ≤ this time</em><br>
+                <em>• P99 = 99% of requests completed in ≤ this time</em>
+            </p>
             <table>
                 <thead>
                     <tr>
-                        <th>Type</th>
+                        <th>Request Type</th>
                         <th>Min</th>
+                        <th>P10</th>
+                        <th>P50 (Median)</th>
                         <th>Avg</th>
-                        <th>Median</th>
+                        <th>P75</th>
                         <th>P95</th>
                         <th>P99</th>
                         <th>Max</th>
@@ -802,32 +1320,32 @@ def generate_rps_section(test_data, duration_seconds=300):
                 </thead>
                 <tbody>
                     <tr>
-                        <td><strong>All Requests</strong></td>
-                        <td>{format_duration(req_duration.get('min', 0))}</td>
-                        <td>{format_duration(req_duration.get('avg', 0))}</td>
-                        <td>{format_duration(req_duration.get('median', 0))}</td>
-                        <td>{format_duration(req_duration.get('p95', 0))}</td>
-                        <td>{format_duration(req_duration.get('p99', 0))}</td>
-                        <td>{format_duration(req_duration.get('max', 0))}</td>
-                    </tr>
+                        <td><strong>Metadata (API)</strong></td>
+                        <td>{format_duration(metadata_duration.get('min', 0))}</td>
+                        <td>{format_duration(metadata_duration.get('p10', 0))}</td>
+                        <td>{format_duration(metadata_duration.get('p50', metadata_duration.get('median', 0)))}</td>
+                        <td>{format_duration(metadata_duration.get('avg', 0))}</td>
+                        <td>{format_duration(metadata_duration.get('p75', 0))}</td>
+                        <td>{format_duration(metadata_duration.get('p95', 0))}</td>
+                        <td>{format_duration(metadata_duration.get('p99', 0))}</td>
+                        <td>{format_duration(metadata_duration.get('max', 0))}</td>
+                    </tr>'''
+    
+    if download_duration:
+        html += f'''
                     <tr>
-                        <td>Metadata Requests</td>
-                        <td>-</td>
-                        <td>{format_duration(metadata.get('avg', 0))}</td>
-                        <td>-</td>
-                        <td>{format_duration(metadata.get('p95', 0))}</td>
-                        <td>{format_duration(metadata.get('p99', 0))}</td>
-                        <td>-</td>
-                    </tr>
-                    <tr>
-                        <td>Download Requests</td>
-                        <td>-</td>
-                        <td>{format_duration(download.get('avg', 0))}</td>
-                        <td>-</td>
-                        <td>{format_duration(download.get('p95', 0))}</td>
-                        <td>{format_duration(download.get('p99', 0))}</td>
-                        <td>-</td>
-                    </tr>
+                        <td><strong>Downloads</strong></td>
+                        <td>{format_duration(download_duration.get('min', 0))}</td>
+                        <td>{format_duration(download_duration.get('p10', 0))}</td>
+                        <td>{format_duration(download_duration.get('p50', download_duration.get('median', 0)))}</td>
+                        <td>{format_duration(download_duration.get('avg', 0))}</td>
+                        <td>{format_duration(download_duration.get('p75', 0))}</td>
+                        <td>{format_duration(download_duration.get('p95', 0))}</td>
+                        <td>{format_duration(download_duration.get('p99', 0))}</td>
+                        <td>{format_duration(download_duration.get('max', 0))}</td>
+                    </tr>'''
+    
+    html += '''
                 </tbody>
             </table>
 '''
@@ -869,14 +1387,14 @@ def generate_rps_section(test_data, duration_seconds=300):
     # Add Chart.js scripts
     html += f'''
     <script>
-        // Response time distribution
+        // Response time distribution (using metadata_duration for API performance)
         new Chart(document.getElementById('{chart_id_base}_latency'), {{
             type: 'bar',
             data: {{
                 labels: ['Min', 'Avg', 'Median', 'P95', 'P99', 'Max'],
                 datasets: [{{
-                    label: 'Response Time (ms)',
-                    data: [{req_duration.get('min', 0):.2f}, {req_duration.get('avg', 0):.2f}, {req_duration.get('median', 0):.2f}, {req_duration.get('p95', 0):.2f}, {req_duration.get('p99', 0):.2f}, {req_duration.get('max', 0):.2f}],
+                    label: 'Metadata Response Time (ms)',
+                    data: [{metadata_duration.get('min', 0):.2f}, {metadata_duration.get('avg', 0):.2f}, {metadata_duration.get('median', 0):.2f}, {metadata_duration.get('p95', 0):.2f}, {metadata_duration.get('p99', 0):.2f}, {metadata_duration.get('max', 0):.2f}],
                     backgroundColor: ['#3498db', '#2ecc71', '#f39c12', '#e74c3c', '#9b59b6', '#34495e']
                 }}]
             }},
@@ -976,79 +1494,15 @@ def generate_rps_section(test_data, duration_seconds=300):
     return html
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 generate-comprehensive-report.py <config-file>")
-        print("")
-        print("Config file format (JSON):")
-        print('[')
-        print('  {"test_id": "test-500rps-5min", "rps": 500},')
-        print('  {"test_id": "test-1000rps-5min", "rps": 1000}')
-        print(']')
-        sys.exit(1)
-    
-    config_file = sys.argv[1]
-    results_dir = sys.argv[2] if len(sys.argv) > 2 else './load-test-results'
-    
-    # Load config
-    with open(config_file, 'r') as f:
-        test_configs = json.load(f)
-    
-    # Determine actual test duration from results
-    test_type = "5-Minute"  # default
-    duration_seconds = None
-    
-    if test_configs:
-        test_id = test_configs[0].get('test_id', '')
-        
-        # Try to read duration from k6 results.json file (NDJSON format)
-        result_files = glob.glob(f"{results_dir}/{test_id}_*_k6_results.json")
-        if result_files:
-            try:
-                first_ts = None
-                last_ts = None
-                with open(result_files[0], 'r') as f:
-                    for line in f:
-                        try:
-                            data = json.loads(line)
-                            if data.get('type') == 'Point' and 'time' in data.get('data', {}):
-                                ts = data['data']['time']
-                                if first_ts is None:
-                                    first_ts = ts
-                                last_ts = ts
-                        except:
-                            continue
-                
-                if first_ts and last_ts:
-                    from datetime import datetime
-                    start = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
-                    end = datetime.fromisoformat(last_ts.replace('Z', '+00:00'))
-                    duration_seconds = int((end - start).total_seconds())
-            except Exception as e:
-                print(f"Warning: Could not read duration from results file: {e}")
-        
-        # If we got a duration, format it appropriately
-        if duration_seconds:
-            if duration_seconds < 90:
-                test_type = f"{duration_seconds}-Second"
-            elif duration_seconds < 3600:
-                minutes = int(round(duration_seconds / 60))
-                test_type = f"{minutes}-Minute"
-            else:
-                hours = int(round(duration_seconds / 3600))
-                test_type = f"{hours}-Hour"
-        # Fallback to checking test_id string
-        elif "1h" in test_id.lower():
-            test_type = "1-Hour"
-    
-    output_file = f"load-test-report-{test_type.lower()}.html"
-    
-    generate_html_report(test_configs, results_dir, output_file, test_type, duration_seconds if duration_seconds else 300)
-    
-    print("")
-    print(f"Report generated: {output_file}")
-    print("Open it in a browser to view the results")
-
-
-if __name__ == '__main__':
-    main()
+# Public API functions
+__all__ = [
+    'parse_k6_json',
+    'parse_system_metrics',
+    'analyze_k6_metrics',
+    'analyze_system_metrics',
+    'aggregate_test_results',
+    'generate_html_report',
+    'format_bytes',
+    'format_duration',
+    'calculate_percentile',
+]

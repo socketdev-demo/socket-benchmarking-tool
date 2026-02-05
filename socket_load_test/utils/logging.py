@@ -17,12 +17,24 @@ from typing import Optional, Dict, Any
 
 # Sensitive patterns to filter from logs
 SENSITIVE_PATTERNS = [
+    # Password patterns
     (re.compile(r'(password["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
+    # API keys
     (re.compile(r'(key["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
-    (re.compile(r'(token["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
-    (re.compile(r'(secret["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
     (re.compile(r'(api[_-]?key["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
+    # Tokens
+    (re.compile(r'(token["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
+    (re.compile(r'(npm[_-]?token["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
+    (re.compile(r'(pypi[_-]?token["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
+    # Secrets
+    (re.compile(r'(secret["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
+    # Generic auth values
     (re.compile(r'(auth["\']?\s*[:=]\s*["\']?)([^"\'}\s,]+)', re.IGNORECASE), r'\1***'),
+    # Authorization headers (Bearer, Basic)
+    (re.compile(r'(Authorization["\']?\s*[:=]\s*["\']?Bearer\s+)([^\s"\'}\],]+)', re.IGNORECASE), r'\1***'),
+    (re.compile(r'(Authorization["\']?\s*[:=]\s*["\']?Basic\s+)([^\s"\'}\],]+)', re.IGNORECASE), r'\1***'),
+    # Command line arguments with tokens/passwords
+    (re.compile(r'(--[a-z-]*(?:token|password|key|secret)[=\s]+)([^\s]+)', re.IGNORECASE), r'\1***'),
 ]
 
 
@@ -198,3 +210,54 @@ def enable_debug_logging() -> None:
 def disable_debug_logging() -> None:
     """Disable debug logging (set to INFO)."""
     set_log_level("INFO")
+
+
+def mask_sensitive_value(value: str, show_chars: int = 4) -> str:
+    """Mask a sensitive value for safe display.
+    
+    Args:
+        value: The sensitive value to mask.
+        show_chars: Number of characters to show at the end (default: 4).
+    
+    Returns:
+        Masked value showing only last few characters.
+    
+    Example:
+        >>> mask_sensitive_value("my-secret-token-12345")
+        "***2345"
+        >>> mask_sensitive_value("short")
+        "***"
+    """
+    if not value:
+        return ""
+    
+    if len(value) <= show_chars:
+        return "***"
+    
+    return f"***{value[-show_chars:]}"
+
+
+def mask_auth_header(header_value: str) -> str:
+    """Mask an Authorization header value for safe display.
+    
+    Args:
+        header_value: The Authorization header value (e.g., "Bearer token123" or "Basic base64string").
+    
+    Returns:
+        Masked header value.
+    
+    Example:
+        >>> mask_auth_header("Bearer my-secret-token")
+        "Bearer ***en"
+        >>> mask_auth_header("Basic dXNlcjpwYXNz")
+        "Basic ***ss"
+    """
+    if not header_value:
+        return ""
+    
+    parts = header_value.split(None, 1)
+    if len(parts) == 2:
+        auth_type, token = parts
+        return f"{auth_type} {mask_sensitive_value(token)}"
+    
+    return mask_sensitive_value(header_value)

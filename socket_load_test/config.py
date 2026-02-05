@@ -153,17 +153,17 @@ class RegistriesConfig:
     maven_path: Optional[str] = None
     ecosystems: List[str] = field(default_factory=lambda: ['npm', 'pypi', 'maven'])
     
-    # NPM Authentication (supports token or username/password)
+    # NPM Authentication (supports Bearer token or Basic auth username/password)
     npm_token: Optional[str] = None  # Bearer token for npm registry
     npm_username: Optional[str] = None  # Basic auth username
     npm_password: Optional[str] = None  # Basic auth password
     
-    # PyPI Authentication (supports token or username/password)
-    pypi_token: Optional[str] = None  # Token for PyPI registry
+    # PyPI Authentication (supports token or username/password, both use Basic auth)
+    pypi_token: Optional[str] = None  # Token for PyPI registry (will use Basic auth: Authorization: Basic base64(__token__:token))
     pypi_username: Optional[str] = None  # Basic auth username
     pypi_password: Optional[str] = None  # Basic auth password
     
-    # Maven Authentication (username/password)
+    # Maven Authentication (username/password only, uses Basic auth)
     maven_username: Optional[str] = None  # Basic auth username
     maven_password: Optional[str] = None  # Basic auth password
 

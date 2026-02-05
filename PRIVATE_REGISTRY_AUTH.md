@@ -2,12 +2,24 @@
 
 This guide explains how to configure authentication for private npm, PyPI, and Maven registries in the Socket Firewall Load Test framework.
 
+## Authentication Methods
+
+**Important:** This framework uses the standard authentication methods for each ecosystem:
+
+| Ecosystem | Method | Authorization Header Format |
+|-----------|--------|---------------------------|
+| **npm** | Bearer Token | `Bearer YOUR_TOKEN` for tokens<br>`Basic base64(username:password)` for credentials |
+| **PyPI** | Basic Auth | `Basic base64(__token__:YOUR_TOKEN)` for tokens<br>`Basic base64(username:password)` for credentials |
+| **Maven** | Basic Auth | `Basic base64(username:password)` only |
+
+**Note:** NPM uses Bearer token authentication while PyPI and Maven use Basic authentication.
+
 ## Quick Start
 
 ### NPM with Bearer Token
 
 ```bash
-export NPM_TOKEN="your-npm-token"
+export NPM_TOKEN="your-npm-token-value"
 socket-load-test test \
   --rps 1000 \
   --duration 5m \
@@ -17,20 +29,22 @@ socket-load-test test \
   --no-docker
 ```
 
-### PyPI with Basic Auth
+**How it works:** The token is automatically formatted as `Authorization: Bearer YOUR_TOKEN`
+
+### PyPI with Token
 
 ```bash
-export PYPI_USERNAME="your-username"
-export PYPI_PASSWORD="your-password"
+export PYPI_TOKEN="pypi-your-token-value"
 socket-load-test test \
   --rps 1000 \
   --duration 5m \
   --ecosystems pypi \
   --pypi-url "https://pypi.private.com" \
-  --pypi-username "${PYPI_USERNAME}" \
-  --pypi-password "${PYPI_PASSWORD}" \
+  --pypi-token "${PYPI_TOKEN}" \
   --no-docker
 ```
+
+**How it works:** The token is automatically formatted as `Authorization: Basic base64(__token__:YOUR_TOKEN)`
 
 ### Maven with Basic Auth
 
@@ -51,9 +65,8 @@ socket-load-test test \
 
 ```bash
 # Set credentials
-export NPM_TOKEN="npm-token"
-export PYPI_USERNAME="pypi-user"
-export PYPI_PASSWORD="pypi-pass"
+export NPM_TOKEN="npm_token_value"
+export PYPI_TOKEN="pypi-token-value"
 export MAVEN_USERNAME="maven-user"
 export MAVEN_PASSWORD="maven-pass"
 
@@ -65,8 +78,7 @@ socket-load-test test \
   --npm-url "https://npm.private.com" \
   --npm-token "${NPM_TOKEN}" \
   --pypi-url "https://pypi.private.com" \
-  --pypi-username "${PYPI_USERNAME}" \
-  --pypi-password "${PYPI_PASSWORD}" \
+  --pypi-token "${PYPI_TOKEN}" \
   --maven-url "https://maven.private.com" \
   --maven-username "${MAVEN_USERNAME}" \
   --maven-password "${MAVEN_PASSWORD}" \

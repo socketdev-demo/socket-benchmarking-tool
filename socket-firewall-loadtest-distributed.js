@@ -346,7 +346,7 @@ function npmMetadataRequest(data) {
       'User-Agent': 'npm/10.0.0 node/v20.0.0',
       'Accept': 'application/json'
     },
-    timeout: '30s',
+    timeout: '60s',
     tags: { 
       ecosystem: 'npm', 
       type: 'metadata',
@@ -374,7 +374,7 @@ function npmDownloadRequest(data) {
       'User-Agent': 'npm/10.0.0 node/v20.0.0',
       'Accept': 'application/json'
     },
-    timeout: '30s',
+    timeout: '120s',
     tags: { 
       ecosystem: 'npm', 
       type: 'download',
@@ -402,7 +402,7 @@ function pypiSimpleRequest(data) {
       'User-Agent': 'pip/23.0 CPython/3.11.0',
       'Accept': 'text/html'
     },
-    timeout: '30s',
+    timeout: '60s',
     tags: { 
       ecosystem: 'pypi', 
       type: 'metadata',
@@ -456,7 +456,7 @@ function pypiDownloadRequest(data) {
       'User-Agent': 'pip/23.0 CPython/3.11.0',
       'Accept': 'text/html'
     },
-    timeout: '30s',
+    timeout: '120s',
     tags: { 
       ecosystem: 'pypi', 
       type: 'download',
@@ -485,7 +485,7 @@ function mavenMetadataRequest(data) {
       'User-Agent': 'Apache-Maven/3.9.0 (Java 17.0.0)',
       'Accept': 'application/xml'
     },
-    timeout: '30s',
+    timeout: '60s',
     tags: { 
       ecosystem: 'maven', 
       type: 'metadata',
@@ -513,7 +513,7 @@ function mavenDownloadRequest(data) {
       'User-Agent': 'Apache-Maven/3.9.0 (Java 17.0.0)',
       'Accept': 'application/java-archive'
     },
-    timeout: '30s',
+    timeout: '120s',
     tags: { 
       ecosystem: 'maven', 
       type: 'download',

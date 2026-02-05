@@ -1,5 +1,6 @@
 """Command-line interface for socket-load-test."""
 
+import json
 import os
 import sys
 import tempfile
@@ -54,10 +55,14 @@ def cli(ctx, config, verbose, log_file):
 @click.option("--test-id", help="Custom test ID (default: auto-generated)")
 @click.option("--output-dir", default="./load-test-results", help="Results output directory")
 @click.option("--load-gen-id", default="gen-1", help="Load generator ID")
+@click.option("--generate-html-report", is_flag=True, help="Generate comprehensive HTML report after test completion")
+@click.option("--html-report-path", type=click.Path(), default="./reports", help="Output directory for HTML report (default: ./reports)")
+@click.option("--packages", type=click.Path(exists=True), help="JSON file with custom package lists (format: {\"npm\": [], \"pypi\": [], \"maven\": []})")
+@click.option("--verbose", is_flag=True, help="Show detailed package information and test configuration")
 @click.pass_context
 def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, npm_path, pypi_path, maven_path, 
          npm_url, pypi_url, maven_url, npm_token, npm_username, npm_password, pypi_token, pypi_username, 
-         pypi_password, maven_username, maven_password, test_id, output_dir, load_gen_id):
+         pypi_password, maven_username, maven_password, test_id, output_dir, load_gen_id, generate_html_report, html_report_path, packages, verbose):
     """Run a load test."""
     
     # Parse and validate ecosystems
@@ -104,6 +109,21 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
         click.echo(f"  - --base-url with appropriate paths (--{'-path, --'.join(missing_urls)}-path)", err=True)
         sys.exit(1)
     
+    # Load custom packages if provided
+    custom_packages = None
+    if packages:
+        try:
+            with open(packages, 'r') as f:
+                custom_packages = json.load(f)
+            click.echo(f"Loaded custom packages from: {packages}")
+            if verbose:
+                for eco in selected_ecosystems:
+                    if eco in custom_packages:
+                        click.echo(f"  {eco}: {len(custom_packages[eco])} packages")
+        except Exception as e:
+            click.echo(f"Error loading packages file: {e}", err=True)
+            sys.exit(1)
+    
     # Generate test ID if not provided
     if not test_id:
         test_id = f"test-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -112,7 +132,7 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
     if no_docker:
         click.echo("Running k6 locally (no Docker)")
     else:
-        click.echo("Running k6 with Docker")
+        click.echo("Running k6 with Docker)")
     
     click.echo(f"\nTest Configuration:")
     click.echo(f"  Test ID:      {test_id}")
@@ -127,6 +147,29 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
         click.echo(f"  Maven URL:    {maven_url}")
     click.echo(f"  Output Dir:   {output_dir}")
     click.echo(f"  Load Gen ID:  {load_gen_id}")
+    
+    # Display package information if verbose
+    if verbose:
+        click.echo(f"\nPackage Configuration:")
+        if custom_packages:
+            click.echo(f"  Source:       Custom packages file ({packages})")
+        else:
+            click.echo(f"  Source:       Default package seeds")
+        
+        # Get package seeds (custom or default)
+        from .core.load.k6_wrapper import K6Manager
+        package_seeds = custom_packages or K6Manager.DEFAULT_PACKAGE_SEEDS
+        
+        for eco in selected_ecosystems:
+            if eco in package_seeds:
+                pkg_list = package_seeds[eco]
+                click.echo(f"\n  {eco.upper()} Packages ({len(pkg_list)} total):")
+                # Show first 10 packages and indicate if there are more
+                for i, pkg in enumerate(pkg_list[:10]):
+                    click.echo(f"    - {pkg}")
+                if len(pkg_list) > 10:
+                    click.echo(f"    ... and {len(pkg_list) - 10} more")
+    
     click.echo()
     
     try:
@@ -162,7 +205,8 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
         k6_manager = K6Manager(
             test_config=test_config,
             registries_config=registries_config,
-            traffic_config=traffic_config
+            traffic_config=traffic_config,
+            package_seeds=custom_packages
         )
         
         # Generate k6 script
@@ -191,6 +235,74 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
             click.echo(f"\n✓ Test completed successfully!")
             click.echo(f"  Results saved to: {output_dir}")
             click.echo(f"  Test ID: {test_id}")
+            
+            # Generate HTML report if requested
+            if generate_html_report:
+                click.echo(f"\nGenerating HTML report...")
+                try:
+                    from .core.reporting.comprehensive_report import generate_html_report as gen_report
+                    import glob
+                    
+                    # Create config for report generation
+                    test_configs = [{"test_id": test_id, "rps": rps}]
+                    
+                    # Determine test duration
+                    result_files = glob.glob(f"{output_dir}/{test_id}_*_k6_results.json")
+                    test_type = "Test"
+                    duration_seconds = None
+                    
+                    if result_files:
+                        try:
+                            first_ts = None
+                            last_ts = None
+                            with open(result_files[0], 'r') as f:
+                                for line in f:
+                                    try:
+                                        data = json.loads(line)
+                                        if data.get('type') == 'Point' and 'time' in data.get('data', {}):
+                                            ts = data['data']['time']
+                                            if first_ts is None:
+                                                first_ts = ts
+                                            last_ts = ts
+                                    except:
+                                        continue
+                            
+                            if first_ts and last_ts:
+                                start = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
+                                end = datetime.fromisoformat(last_ts.replace('Z', '+00:00'))
+                                duration_seconds = int((end - start).total_seconds())
+                                
+                                # Format test type based on duration
+                                if duration_seconds < 90:
+                                    test_type = f"{duration_seconds}-Second"
+                                elif duration_seconds < 3600:
+                                    minutes = int(round(duration_seconds / 60))
+                                    test_type = f"{minutes}-Minute"
+                                else:
+                                    hours = int(round(duration_seconds / 3600))
+                                    test_type = f"{hours}-Hour"
+                        except Exception as e:
+                            click.echo(f"  Warning: Could not determine test duration: {e}")
+                    
+                    # Set defaults if not detected
+                    duration_seconds = duration_seconds or 300
+                    
+                    # Ensure output directory exists
+                    os.makedirs(html_report_path, exist_ok=True)
+                    
+                    # Generate output file path
+                    output_file = os.path.join(html_report_path, f"load-test-report-{test_type.lower()}.html")
+                    
+                    # Generate the report
+                    gen_report(test_configs, output_dir, output_file, test_type, duration_seconds)
+                    
+                    click.echo(f"  ✓ HTML report generated: {output_file}")
+                    
+                except Exception as e:
+                    click.echo(f"  ✗ Failed to generate HTML report: {e}", err=True)
+                    if ctx.obj.get("verbose"):
+                        import traceback
+                        traceback.print_exc()
         else:
             click.echo(f"\n✗ Test failed with exit code: {exit_code}", err=True)
             sys.exit(exit_code)

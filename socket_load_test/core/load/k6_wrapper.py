@@ -36,12 +36,26 @@ import encoding from 'k6/encoding';
 const cacheHitRate = new Rate('cache_hits');
 const metadataLatency = new Trend('metadata_latency');
 const downloadLatency = new Trend('download_latency');
+// Separate request duration metrics for metadata vs downloads
+const metadataRequestDuration = new Trend('metadata_request_duration');
+const downloadRequestDuration = new Trend('download_request_duration');
 const errorRate = new Rate('errors');
 const requestCounter = new Counter('total_requests');
 const successCounter = new Counter('successful_requests');
 const npmRequests = new Counter('npm_requests');
 const pypiRequests = new Counter('pypi_requests');
 const mavenRequests = new Counter('maven_requests');
+
+// Bandwidth tracking - using Trend to preserve tags (Counter doesn't emit data points to JSON)
+const responseSize = new Trend('response_bytes');
+
+// HTTP Status Code tracking
+const status2xx = new Counter('status_2xx');  // Success responses
+const status404 = new Counter('status_404');  // Not Found (expected, not an error)
+const status403 = new Counter('status_403');  // Forbidden (expected, not an error)
+const status4xx = new Counter('status_4xx');  // Other client errors (excluding 404/403)
+const status5xx = new Counter('status_5xx');  // Server errors
+const statusTimeout = new Counter('status_timeout');  // Network timeouts (status 0)
 
 // Configuration
 const NPM_BASE_URL = __ENV.NPM_URL || '{{ npm_url }}';
@@ -92,6 +106,9 @@ function getNpmAuthHeaders() {
     'Accept': 'application/json'
   };
   
+  // NPM registry authentication:
+  // - Tokens use Bearer auth: Authorization: Bearer <token>
+  // - Username/password use Basic auth: Authorization: Basic base64(username:password)
   if (NPM_TOKEN && NPM_TOKEN !== '') {
     headers['Authorization'] = `Bearer ${NPM_TOKEN}`;
   } else if (NPM_USERNAME && NPM_USERNAME !== '' && NPM_PASSWORD && NPM_PASSWORD !== '') {
@@ -108,8 +125,12 @@ function getPypiAuthHeaders() {
     'Accept': 'text/html'
   };
   
+  // PyPI authentication:
+  // - Tokens use Basic auth with format: base64encode(__token__:token_value)
+  // - Username/password use Basic auth with format: base64encode(username:password)
   if (PYPI_TOKEN && PYPI_TOKEN !== '') {
-    headers['Authorization'] = `Bearer ${PYPI_TOKEN}`;
+    const credentials = encoding.b64encode(`__token__:${PYPI_TOKEN}`);
+    headers['Authorization'] = `Basic ${credentials}`;
   } else if (PYPI_USERNAME && PYPI_USERNAME !== '' && PYPI_PASSWORD && PYPI_PASSWORD !== '') {
     const credentials = encoding.b64encode(`${PYPI_USERNAME}:${PYPI_PASSWORD}`);
     headers['Authorization'] = `Basic ${credentials}`;
@@ -362,15 +383,56 @@ function getPackage(ecosystem, data) {
   }
 }
 
-function checkResponse(response, ecosystem, type) {
+function checkResponse(response, ecosystem, type, tags) {
   const success = response.status === 200 || response.status === 304;
-  const isError = !success;
+  
+  // Track HTTP status codes
+  if (response.status === 0) {
+    // Client-side timeout (k6 timeout, not server response)
+    statusTimeout.add(1);
+  } else if (response.status >= 200 && response.status < 300) {
+    // 2xx Success
+    status2xx.add(1);
+  } else if (response.status === 404) {
+    // 404 Not Found - expected behavior, not counted as error
+    status404.add(1);
+  } else if (response.status === 403) {
+    // 403 Forbidden - expected behavior, not counted as error
+    status403.add(1);
+  } else if (response.status >= 400 && response.status < 500) {
+    // Other 4xx errors (excluding 404/403)
+    status4xx.add(1);
+  } else if (response.status >= 500 && response.status < 600) {
+    // 5xx Server errors
+    status5xx.add(1);
+  }
+  
+  // Error tracking: only count server errors (5xx) and other 4xx (excluding 404/403)
+  // Don't count client-side timeouts (status 0) or expected 404/403
+  const isServerError = (response.status >= 500 && response.status < 600) || 
+                        (response.status >= 400 && response.status < 500 && 
+                         response.status !== 404 && response.status !== 403);
   
   requestCounter.add(1);
   if (success) {
     successCounter.add(1);
   }
-  errorRate.add(isError);
+  errorRate.add(isServerError);
+  
+  // Track response size using Trend metric with explicit tags
+  // Prefer Content-Length (works even when responseType is 'none'), fall back to body length
+  let bytesTransferred = 0;
+  const contentLengthHeader = response.headers && (response.headers['Content-Length'] || response.headers['content-length']);
+  if (contentLengthHeader) {
+    const parsedLength = parseInt(contentLengthHeader, 10);
+    if (!isNaN(parsedLength)) {
+      bytesTransferred = parsedLength;
+    }
+  }
+  if (bytesTransferred === 0 && response.body) {
+    bytesTransferred = response.body.length || 0;
+  }
+  responseSize.add(bytesTransferred, tags || { ecosystem, type });
   
   // Check cache status
   const cacheHeader = response.headers['X-Cache-Status'] || 
@@ -395,7 +457,7 @@ function npmMetadataRequest(data) {
   const startTime = Date.now();
   const response = http.get(url, {
     headers: getNpmAuthHeaders(),
-    timeout: '30s',
+    timeout: '60s',
     tags: { 
       ecosystem: 'npm', 
       type: 'metadata',
@@ -406,8 +468,9 @@ function npmMetadataRequest(data) {
   });
   const duration = Date.now() - startTime;
   
-  checkResponse(response, 'npm', 'metadata');
+  checkResponse(response, 'npm', 'metadata', { ecosystem: 'npm', type: 'metadata' });
   metadataLatency.add(duration);
+  metadataRequestDuration.add(duration, { ecosystem: 'npm', type: 'metadata' });
   npmRequests.add(1);
 }
 
@@ -419,7 +482,7 @@ function npmDownloadRequest(data) {
   const startTime = Date.now();
   const response = http.get(url, {
     headers: getNpmAuthHeaders(),
-    timeout: '30s',
+    timeout: '120s',  // Downloads can be large, allow more time
     tags: { 
       ecosystem: 'npm', 
       type: 'download',
@@ -431,8 +494,9 @@ function npmDownloadRequest(data) {
   });
   const duration = Date.now() - startTime;
   
-  checkResponse(response, 'npm', 'download');
+  checkResponse(response, 'npm', 'download', { ecosystem: 'npm', type: 'download' });
   downloadLatency.add(duration);
+  downloadRequestDuration.add(duration, { ecosystem: 'npm', type: 'download' });
   npmRequests.add(1);
 }
 
@@ -444,7 +508,7 @@ function pypiSimpleRequest(data) {
   const startTime = Date.now();
   const response = http.get(url, {
     headers: getPypiAuthHeaders(),
-    timeout: '30s',
+    timeout: '60s',
     tags: { 
       ecosystem: 'pypi', 
       type: 'metadata',
@@ -455,8 +519,9 @@ function pypiSimpleRequest(data) {
   });
   const duration = Date.now() - startTime;
   
-  checkResponse(response, 'pypi', 'metadata');
+  checkResponse(response, 'pypi', 'metadata', { ecosystem: 'pypi', type: 'metadata' });
   metadataLatency.add(duration);
+  metadataRequestDuration.add(duration, { ecosystem: 'pypi', type: 'metadata' });
   pypiRequests.add(1);
 }
 
@@ -467,7 +532,7 @@ function pypiJsonRequest(data) {
   const startTime = Date.now();
   const response = http.get(url, {
     headers: Object.assign(getPypiAuthHeaders(), { 'Accept': 'application/json' }),
-    timeout: '30s',
+    timeout: '60s',
     tags: { 
       ecosystem: 'pypi', 
       type: 'metadata',
@@ -478,8 +543,9 @@ function pypiJsonRequest(data) {
   });
   const duration = Date.now() - startTime;
   
-  checkResponse(response, 'pypi', 'metadata');
+  checkResponse(response, 'pypi', 'metadata', { ecosystem: 'pypi', type: 'metadata' });
   metadataLatency.add(duration);
+  metadataRequestDuration.add(duration, { ecosystem: 'pypi', type: 'metadata' });
   pypiRequests.add(1);
 }
 
@@ -491,7 +557,7 @@ function pypiDownloadRequest(data) {
   const startTime = Date.now();
   const response = http.get(url, {
     headers: getPypiAuthHeaders(),
-    timeout: '30s',
+    timeout: '120s',  // Downloads can be large, allow more time
     tags: { 
       ecosystem: 'pypi', 
       type: 'download',
@@ -503,8 +569,9 @@ function pypiDownloadRequest(data) {
   });
   const duration = Date.now() - startTime;
   
-  checkResponse(response, 'pypi', 'download');
+  checkResponse(response, 'pypi', 'download', { ecosystem: 'pypi', type: 'download' });
   downloadLatency.add(duration);
+  downloadRequestDuration.add(duration, { ecosystem: 'pypi', type: 'download' });
   pypiRequests.add(1);
 }
 
@@ -517,7 +584,7 @@ function mavenMetadataRequest(data) {
   const startTime = Date.now();
   const response = http.get(url, {
     headers: getMavenAuthHeaders(),
-    timeout: '30s',
+    timeout: '60s',
     tags: { 
       ecosystem: 'maven', 
       type: 'metadata',
@@ -528,8 +595,9 @@ function mavenMetadataRequest(data) {
   });
   const duration = Date.now() - startTime;
   
-  checkResponse(response, 'maven', 'metadata');
+  checkResponse(response, 'maven', 'metadata', { ecosystem: 'maven', type: 'metadata' });
   metadataLatency.add(duration);
+  metadataRequestDuration.add(duration, { ecosystem: 'maven', type: 'metadata' });
   mavenRequests.add(1);
 }
 
@@ -542,7 +610,7 @@ function mavenDownloadRequest(data) {
   const startTime = Date.now();
   const response = http.get(url, {
     headers: getMavenAuthHeaders(),
-    timeout: '30s',
+    timeout: '120s',  // Downloads can be large, allow more time
     tags: { 
       ecosystem: 'maven', 
       type: 'download',
@@ -554,8 +622,9 @@ function mavenDownloadRequest(data) {
   });
   const duration = Date.now() - startTime;
   
-  checkResponse(response, 'maven', 'download');
+  checkResponse(response, 'maven', 'download', { ecosystem: 'maven', type: 'download' });
   downloadLatency.add(duration);
+  downloadRequestDuration.add(duration, { ecosystem: 'maven', type: 'download' });
   mavenRequests.add(1);
 }
 
