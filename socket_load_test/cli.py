@@ -1,84 +1,42 @@
 """Command-line interface for socket-load-test."""
 
+import argparse
 import json
 import os
 import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
-import click
 
 from .config import TestConfig, RegistriesConfig, TrafficConfig
 from .core.load.k6_wrapper import K6Manager
 
 
-@click.group()
-@click.version_option()
-@click.option("--config", type=click.Path(exists=True), help="Path to config file")
-@click.option("--verbose", is_flag=True, help="Enable verbose output")
-@click.option("--log-file", type=click.Path(), help="Path to log file")
-@click.pass_context
-def cli(ctx, config, verbose, log_file):
-    """Socket Load Test - Distributed load testing for Socket Registry Firewall."""
-    ctx.ensure_object(dict)
-    ctx.obj["config"] = config
-    ctx.obj["verbose"] = verbose
-    ctx.obj["log_file"] = log_file
-
-
-@cli.command()
-@click.option("--no-docker", is_flag=True, help="Run k6 locally without Docker")
-@click.option("--host", help="Target firewall host")
-@click.option("--port", type=int, default=8080, help="Target firewall port")
-@click.option("--duration", default="60s", help="Test duration (e.g., 60s, 5m)")
-@click.option("--vus", type=int, help="Number of virtual users")
-@click.option("--rps", type=int, required=True, help="Target requests per second")
-@click.option("--ecosystems", required=True, help="Comma-separated list of ecosystems to test (npm,pypi,maven)")
-@click.option("--base-url", help="Base firewall URL (use with --npm-path, --pypi-path, --maven-path)")
-@click.option("--npm-path", help="Path for npm registry (e.g., /npm or /custom/npm)")
-@click.option("--pypi-path", help="Path for pypi registry (e.g., /pypi or /simple)")
-@click.option("--maven-path", help="Path for maven registry (e.g., /maven or /maven2)")
-@click.option("--npm-url", help="Full NPM registry URL (overrides --base-url)")
-@click.option("--pypi-url", help="Full PyPI registry URL (overrides --base-url)")
-@click.option("--maven-url", help="Full Maven registry URL (overrides --base-url)")
-# Authentication options for npm
-@click.option("--npm-token", help="Bearer token for NPM registry authentication")
-@click.option("--npm-username", help="Username for NPM registry basic authentication")
-@click.option("--npm-password", help="Password for NPM registry basic authentication")
-# Authentication options for PyPI
-@click.option("--pypi-token", help="Bearer token for PyPI registry authentication")
-@click.option("--pypi-username", help="Username for PyPI registry basic authentication")
-@click.option("--pypi-password", help="Password for PyPI registry basic authentication")
-# Authentication options for Maven
-@click.option("--maven-username", help="Username for Maven registry basic authentication")
-@click.option("--maven-password", help="Password for Maven registry basic authentication")
-@click.option("--test-id", help="Custom test ID (default: auto-generated)")
-@click.option("--output-dir", default="./load-test-results", help="Results output directory")
-@click.option("--load-gen-id", default="gen-1", help="Load generator ID")
-@click.option("--generate-html-report", is_flag=True, help="Generate comprehensive HTML report after test completion")
-@click.option("--html-report-path", type=click.Path(), default="./reports", help="Output directory for HTML report (default: ./reports)")
-@click.option("--packages", type=click.Path(exists=True), help="JSON file with custom package lists (format: {\"npm\": [], \"pypi\": [], \"maven\": []})")
-@click.option("--verbose", is_flag=True, help="Show detailed package information and test configuration")
-@click.pass_context
-def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, npm_path, pypi_path, maven_path, 
-         npm_url, pypi_url, maven_url, npm_token, npm_username, npm_password, pypi_token, pypi_username, 
-         pypi_password, maven_username, maven_password, test_id, output_dir, load_gen_id, generate_html_report, html_report_path, packages, verbose):
+def test_command(args):
     """Run a load test."""
     
     # Parse and validate ecosystems
-    selected_ecosystems = [e.strip().lower() for e in ecosystems.split(',')]
+    selected_ecosystems = [e.strip().lower() for e in args.ecosystems.split(',')]
     valid_ecosystems = ['npm', 'pypi', 'maven']
     
     for ecosystem in selected_ecosystems:
         if ecosystem not in valid_ecosystems:
-            click.echo(f"Error: Invalid ecosystem '{ecosystem}'. Must be one of: {', '.join(valid_ecosystems)}", err=True)
+            print(f"Error: Invalid ecosystem '{ecosystem}'. Must be one of: {', '.join(valid_ecosystems)}", file=sys.stderr)
             sys.exit(1)
     
     if not selected_ecosystems:
-        click.echo("Error: At least one ecosystem must be specified", err=True)
+        print("Error: At least one ecosystem must be specified", file=sys.stderr)
         sys.exit(1)
     
     # Handle base-url + path combinations
+    base_url = args.base_url
+    npm_url = args.npm_url
+    pypi_url = args.pypi_url
+    maven_url = args.maven_url
+    npm_path = args.npm_path
+    pypi_path = args.pypi_path
+    maven_path = args.maven_path
+    
     if base_url and not base_url.startswith(('http://', 'https://')):
         base_url = f"https://{base_url}"
     
@@ -102,59 +60,61 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
         missing_urls.append('maven')
     
     if missing_urls:
-        click.echo(f"Error: Missing URLs for selected ecosystems: {', '.join(missing_urls)}", err=True)
-        click.echo("Must provide either:", err=True)
+        print(f"Error: Missing URLs for selected ecosystems: {', '.join(missing_urls)}", file=sys.stderr)
+        print("Must provide either:", file=sys.stderr)
         for eco in missing_urls:
-            click.echo(f"  - --{eco}-url, OR", err=True)
-        click.echo(f"  - --base-url with appropriate paths (--{'-path, --'.join(missing_urls)}-path)", err=True)
+            print(f"  - --{eco}-url, OR", file=sys.stderr)
+        print(f"  - --base-url with appropriate paths (--{'-path, --'.join(missing_urls)}-path)", file=sys.stderr)
         sys.exit(1)
     
     # Load custom packages if provided
     custom_packages = None
+    packages = args.packages
     if packages:
         try:
             with open(packages, 'r') as f:
                 custom_packages = json.load(f)
-            click.echo(f"Loaded custom packages from: {packages}")
-            if verbose:
+            print(f"Loaded custom packages from: {packages}")
+            if args.verbose:
                 for eco in selected_ecosystems:
                     if eco in custom_packages:
-                        click.echo(f"  {eco}: {len(custom_packages[eco])} packages")
+                        print(f"  {eco}: {len(custom_packages[eco])} packages")
         except Exception as e:
-            click.echo(f"Error loading packages file: {e}", err=True)
+            print(f"Error loading packages file: {e}", file=sys.stderr)
             sys.exit(1)
     
     # Generate test ID if not provided
+    test_id = args.test_id
     if not test_id:
         test_id = f"test-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     
     # Display configuration
-    if no_docker:
-        click.echo("Running k6 locally (no Docker)")
+    if args.no_docker:
+        print("Running k6 locally (no Docker)")
     else:
-        click.echo("Running k6 with Docker)")
+        print("Running k6 with Docker)")
     
-    click.echo(f"\nTest Configuration:")
-    click.echo(f"  Test ID:      {test_id}")
-    click.echo(f"  Duration:     {duration}")
-    click.echo(f"  Target RPS:   {rps}")
-    click.echo(f"  Ecosystems:   {', '.join(selected_ecosystems)}")
+    print(f"\nTest Configuration:")
+    print(f"  Test ID:      {test_id}")
+    print(f"  Duration:     {args.duration}")
+    print(f"  Target RPS:   {args.rps}")
+    print(f"  Ecosystems:   {', '.join(selected_ecosystems)}")
     if 'npm' in selected_ecosystems:
-        click.echo(f"  NPM URL:      {npm_url}")
+        print(f"  NPM URL:      {npm_url}")
     if 'pypi' in selected_ecosystems:
-        click.echo(f"  PyPI URL:     {pypi_url}")
+        print(f"  PyPI URL:     {pypi_url}")
     if 'maven' in selected_ecosystems:
-        click.echo(f"  Maven URL:    {maven_url}")
-    click.echo(f"  Output Dir:   {output_dir}")
-    click.echo(f"  Load Gen ID:  {load_gen_id}")
+        print(f"  Maven URL:    {maven_url}")
+    print(f"  Output Dir:   {args.output_dir}")
+    print(f"  Load Gen ID:  {args.load_gen_id}")
     
     # Display package information if verbose
-    if verbose:
-        click.echo(f"\nPackage Configuration:")
+    if args.verbose:
+        print(f"\nPackage Configuration:")
         if custom_packages:
-            click.echo(f"  Source:       Custom packages file ({packages})")
+            print(f"  Source:       Custom packages file ({packages})")
         else:
-            click.echo(f"  Source:       Default package seeds")
+            print(f"  Source:       Default package seeds")
         
         # Get package seeds (custom or default)
         from .core.load.k6_wrapper import K6Manager
@@ -163,22 +123,22 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
         for eco in selected_ecosystems:
             if eco in package_seeds:
                 pkg_list = package_seeds[eco]
-                click.echo(f"\n  {eco.upper()} Packages ({len(pkg_list)} total):")
+                print(f"\n  {eco.upper()} Packages ({len(pkg_list)} total):")
                 # Show first 10 packages and indicate if there are more
                 for i, pkg in enumerate(pkg_list[:10]):
-                    click.echo(f"    - {pkg}")
+                    print(f"    - {pkg}")
                 if len(pkg_list) > 10:
-                    click.echo(f"    ... and {len(pkg_list) - 10} more")
+                    print(f"    ... and {len(pkg_list) - 10} more")
     
-    click.echo()
+    print()
     
     try:
         # Create configuration objects
         test_config = TestConfig(
-            rps=rps,
-            duration=duration,
+            rps=args.rps,
+            duration=args.duration,
             test_id=test_id,
-            no_docker=no_docker
+            no_docker=args.no_docker
         )
         
         registries_config = RegistriesConfig(
@@ -187,16 +147,16 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
             maven_url=maven_url,
             ecosystems=selected_ecosystems,
             # NPM authentication
-            npm_token=npm_token,
-            npm_username=npm_username,
-            npm_password=npm_password,
+            npm_token=args.npm_token,
+            npm_username=args.npm_username,
+            npm_password=args.npm_password,
             # PyPI authentication
-            pypi_token=pypi_token,
-            pypi_username=pypi_username,
-            pypi_password=pypi_password,
+            pypi_token=args.pypi_token,
+            pypi_username=args.pypi_username,
+            pypi_password=args.pypi_password,
             # Maven authentication
-            maven_username=maven_username,
-            maven_password=maven_password
+            maven_username=args.maven_username,
+            maven_password=args.maven_password
         )
         
         traffic_config = TrafficConfig(ecosystems=selected_ecosystems)
@@ -210,44 +170,44 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
         )
         
         # Generate k6 script
-        click.echo("Generating k6 test script...")
+        print("Generating k6 test script...")
         with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
             script_path = f.name
             script_content = k6_manager.generate_script()
             f.write(script_content)
         
-        click.echo(f"k6 script generated: {script_path}")
+        print(f"k6 script generated: {script_path}")
         
         # Execute k6 test
-        click.echo(f"\nStarting k6 load test...")
-        click.echo("=" * 60)
+        print(f"\nStarting k6 load test...")
+        print("=" * 60)
         
         exit_code = k6_manager.execute_k6(
             script_path=script_path,
-            output_dir=output_dir,
-            load_gen_id=load_gen_id,
-            no_docker=no_docker
+            output_dir=args.output_dir,
+            load_gen_id=args.load_gen_id,
+            no_docker=args.no_docker
         )
         
-        click.echo("=" * 60)
+        print("=" * 60)
         
         if exit_code == 0:
-            click.echo(f"\n✓ Test completed successfully!")
-            click.echo(f"  Results saved to: {output_dir}")
-            click.echo(f"  Test ID: {test_id}")
+            print(f"\n✓ Test completed successfully!")
+            print(f"  Results saved to: {args.output_dir}")
+            print(f"  Test ID: {test_id}")
             
             # Generate HTML report if requested
-            if generate_html_report:
-                click.echo(f"\nGenerating HTML report...")
+            if args.generate_html_report:
+                print(f"\nGenerating HTML report...")
                 try:
                     from .core.reporting.comprehensive_report import generate_html_report as gen_report
                     import glob
                     
                     # Create config for report generation
-                    test_configs = [{"test_id": test_id, "rps": rps}]
+                    test_configs = [{"test_id": test_id, "rps": args.rps}]
                     
                     # Determine test duration
-                    result_files = glob.glob(f"{output_dir}/{test_id}_*_k6_results.json")
+                    result_files = glob.glob(f"{args.output_dir}/{test_id}_*_k6_results.json")
                     test_type = "Test"
                     duration_seconds = None
                     
@@ -282,29 +242,29 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
                                     hours = int(round(duration_seconds / 3600))
                                     test_type = f"{hours}-Hour"
                         except Exception as e:
-                            click.echo(f"  Warning: Could not determine test duration: {e}")
+                            print(f"  Warning: Could not determine test duration: {e}")
                     
                     # Set defaults if not detected
                     duration_seconds = duration_seconds or 300
                     
                     # Ensure output directory exists
-                    os.makedirs(html_report_path, exist_ok=True)
+                    os.makedirs(args.html_report_path, exist_ok=True)
                     
                     # Generate output file path
-                    output_file = os.path.join(html_report_path, f"load-test-report-{test_type.lower()}.html")
+                    output_file = os.path.join(args.html_report_path, f"load-test-report-{test_type.lower()}.html")
                     
                     # Generate the report
-                    gen_report(test_configs, output_dir, output_file, test_type, duration_seconds)
+                    gen_report(test_configs, args.output_dir, output_file, test_type, duration_seconds)
                     
-                    click.echo(f"  ✓ HTML report generated: {output_file}")
+                    print(f"  ✓ HTML report generated: {output_file}")
                     
                 except Exception as e:
-                    click.echo(f"  ✗ Failed to generate HTML report: {e}", err=True)
-                    if ctx.obj.get("verbose"):
+                    print(f"  ✗ Failed to generate HTML report: {e}", file=sys.stderr)
+                    if args.verbose:
                         import traceback
                         traceback.print_exc()
         else:
-            click.echo(f"\n✗ Test failed with exit code: {exit_code}", err=True)
+            print(f"\n✗ Test failed with exit code: {exit_code}", file=sys.stderr)
             sys.exit(exit_code)
             
         # Clean up temp script
@@ -314,32 +274,112 @@ def test(ctx, no_docker, host, port, duration, vus, rps, ecosystems, base_url, n
             pass
             
     except Exception as e:
-        click.echo(f"\nError: {e}", err=True)
-        if ctx.obj["verbose"]:
+        print(f"\nError: {e}", file=sys.stderr)
+        if args.verbose:
             import traceback
             traceback.print_exc()
         sys.exit(1)
 
 
-@cli.command()
-def report():
+def report_command(args):
     """Generate a report from existing test results."""
-    click.echo("Report command - to be implemented")
+    print("Report command - to be implemented")
 
 
-@cli.command()
-def setup():
+def setup_command(args):
     """Setup monitoring or SSH keys."""
-    click.echo("Setup command - to be implemented")
+    print("Setup command - to be implemented")
 
 
-@cli.command()
-def validate():
+def validate_command(args):
     """Validate configuration and connectivity."""
-    click.echo("Validate command - to be implemented")
+    print("Validate command - to be implemented")
 
 
-@cli.command()
-def aggregate():
+def aggregate_command(args):
     """Aggregate results from multiple load generators."""
-    click.echo("Aggregate command - to be implemented")
+    print("Aggregate command - to be implemented")
+
+
+def cli():
+    """Socket Load Test - Distributed load testing for Socket Registry Firewall."""
+    parser = argparse.ArgumentParser(
+        description='Socket Load Test - Distributed load testing for Socket Registry Firewall',
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    
+    # Global options
+    parser.add_argument('--version', action='version', version='socket-load-test 0.1.0')
+    parser.add_argument('--config', type=str, help='Path to config file')
+    parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
+    parser.add_argument('--log-file', type=str, help='Path to log file')
+    
+    # Subcommands
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Test command
+    test_parser = subparsers.add_parser('test', help='Run a load test')
+    test_parser.add_argument('--no-docker', action='store_true', help='Run k6 locally without Docker')
+    test_parser.add_argument('--host', type=str, help='Target firewall host')
+    test_parser.add_argument('--port', type=int, default=8080, help='Target firewall port')
+    test_parser.add_argument('--duration', type=str, default='60s', help='Test duration (e.g., 60s, 5m)')
+    test_parser.add_argument('--vus', type=int, help='Number of virtual users')
+    test_parser.add_argument('--rps', type=int, required=True, help='Target requests per second')
+    test_parser.add_argument('--ecosystems', type=str, required=True, help='Comma-separated list of ecosystems to test (npm,pypi,maven)')
+    test_parser.add_argument('--base-url', type=str, help='Base firewall URL (use with --npm-path, --pypi-path, --maven-path)')
+    test_parser.add_argument('--npm-path', type=str, help='Path for npm registry (e.g., /npm or /custom/npm)')
+    test_parser.add_argument('--pypi-path', type=str, help='Path for pypi registry (e.g., /pypi or /simple)')
+    test_parser.add_argument('--maven-path', type=str, help='Path for maven registry (e.g., /maven or /maven2)')
+    test_parser.add_argument('--npm-url', type=str, help='Full NPM registry URL (overrides --base-url)')
+    test_parser.add_argument('--pypi-url', type=str, help='Full PyPI registry URL (overrides --base-url)')
+    test_parser.add_argument('--maven-url', type=str, help='Full Maven registry URL (overrides --base-url)')
+    # Authentication options for npm
+    test_parser.add_argument('--npm-token', type=str, help='Bearer token for NPM registry authentication')
+    test_parser.add_argument('--npm-username', type=str, help='Username for NPM registry basic authentication')
+    test_parser.add_argument('--npm-password', type=str, help='Password for NPM registry basic authentication')
+    # Authentication options for PyPI
+    test_parser.add_argument('--pypi-token', type=str, help='Bearer token for PyPI registry authentication')
+    test_parser.add_argument('--pypi-username', type=str, help='Username for PyPI registry basic authentication')
+    test_parser.add_argument('--pypi-password', type=str, help='Password for PyPI registry basic authentication')
+    # Authentication options for Maven
+    test_parser.add_argument('--maven-username', type=str, help='Username for Maven registry basic authentication')
+    test_parser.add_argument('--maven-password', type=str, help='Password for Maven registry basic authentication')
+    test_parser.add_argument('--test-id', type=str, help='Custom test ID (default: auto-generated)')
+    test_parser.add_argument('--output-dir', type=str, default='./load-test-results', help='Results output directory')
+    test_parser.add_argument('--load-gen-id', type=str, default='gen-1', help='Load generator ID')
+    test_parser.add_argument('--generate-html-report', action='store_true', help='Generate comprehensive HTML report after test completion')
+    test_parser.add_argument('--html-report-path', type=str, default='./reports', help='Output directory for HTML report (default: ./reports)')
+    test_parser.add_argument('--packages', type=str, help='JSON file with custom package lists (format: {"npm": [], "pypi": [], "maven": []})')
+    test_parser.set_defaults(func=test_command)
+    
+    # Report command
+    report_parser = subparsers.add_parser('report', help='Generate a report from existing test results')
+    report_parser.set_defaults(func=report_command)
+    
+    # Setup command
+    setup_parser = subparsers.add_parser('setup', help='Setup monitoring or SSH keys')
+    setup_parser.set_defaults(func=setup_command)
+    
+    # Validate command
+    validate_parser = subparsers.add_parser('validate', help='Validate configuration and connectivity')
+    validate_parser.set_defaults(func=validate_command)
+    
+    # Aggregate command
+    aggregate_parser = subparsers.add_parser('aggregate', help='Aggregate results from multiple load generators')
+    aggregate_parser.set_defaults(func=aggregate_command)
+    
+    # Parse arguments
+    args = parser.parse_args()
+    
+    # If no command provided, show help
+    if not hasattr(args, 'func'):
+        parser.print_help()
+        sys.exit(1)
+    
+    # Execute the command
+    args.func(args)
+
+
+if __name__ == '__main__':
+    cli()
+

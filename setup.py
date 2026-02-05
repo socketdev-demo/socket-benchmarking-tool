@@ -27,7 +27,6 @@ setup(
     ],
     python_requires=">=3.8",
     install_requires=[
-        "click>=8.0.0",
         "paramiko>=2.11.0",
         "pyyaml>=6.0",
         "jinja2>=3.0.0",
