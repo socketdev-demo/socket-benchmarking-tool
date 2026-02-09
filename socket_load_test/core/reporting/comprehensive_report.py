@@ -466,8 +466,12 @@ def format_duration(ms):
         return f"{ms / 1000:.2f}s"
 
 
-def generate_html_report(test_configs, results_dir, output_file, test_type="5-Minute", duration_seconds=300):
+def generate_html_report(test_configs, results_dir, output_file, test_type="5-Minute", duration_seconds=300, registry_urls=None):
     """Generate comprehensive HTML report"""
+    
+    # Set default registry URLs if not provided
+    if registry_urls is None:
+        registry_urls = {}
     
     print(f"Generating {test_type} Test Report...")
     
@@ -692,8 +696,23 @@ def generate_html_content(all_test_data, test_type, duration_seconds=300):
         <div class="overview">
             <h2>Test Overview</h2>
             <p><strong>Test Type:</strong> ''' + test_type + ''' Load Test</p>
-            <p><strong>Purpose:</strong> Evaluate Socket Firewall performance under sustained load across multiple RPS levels</p>
-            <p><strong>Ecosystems Tested:</strong> npm (sfw.dougbot.ai/npm), PyPI (sfw.dougbot.ai/pypi), Maven (sfw.dougbot.ai/maven)</p>
+            <p><strong>Purpose:</strong> Evaluate Socket Firewall performance under sustained load across multiple RPS levels</p>'''
+    
+    # Add ecosystem information if registry URLs are provided
+    if registry_urls:
+        ecosystems_info = []
+        if 'npm' in registry_urls:
+            ecosystems_info.append(f"npm ({registry_urls['npm']})")
+        if 'pypi' in registry_urls:
+            ecosystems_info.append(f"PyPI ({registry_urls['pypi']})")
+        if 'maven' in registry_urls:
+            ecosystems_info.append(f"Maven ({registry_urls['maven']})")
+        
+        if ecosystems_info:
+            html += f'''
+            <p><strong>Ecosystems Tested:</strong> {', '.join(ecosystems_info)}</p>'''
+    
+    html += '''
             <p><strong>Traffic Mix:</strong> 40% metadata requests, 60% package downloads</p>
             <p><strong>Cache Simulation:</strong> 30% cache hits using popular packages</p>
             <p><strong>RPS Levels:</strong> ''' + ', '.join(rps_list) + ''' requests/second</p>
@@ -718,10 +737,21 @@ def generate_html_content(all_test_data, test_type, duration_seconds=300):
     
     html += '''
             <p><strong>Registry URLs:</strong></p>
-            <ul style="margin-left: 20px;">
-                <li>npm: https://sfw.dougbot.ai/npm</li>
-                <li>PyPI: https://sfw.dougbot.ai/pypi</li>
-                <li>Maven: https://sfw.dougbot.ai/maven</li>
+            <ul style="margin-left: 20px;">'''
+    
+    # Add registry URLs if provided
+    if registry_urls:
+        if 'npm' in registry_urls:
+            html += f'''
+                <li>npm: {registry_urls['npm']}</li>'''
+        if 'pypi' in registry_urls:
+            html += f'''
+                <li>PyPI: {registry_urls['pypi']}</li>'''
+        if 'maven' in registry_urls:
+            html += f'''
+                <li>Maven: {registry_urls['maven']}</li>'''
+    
+    html += '''
             </ul>
             <p><strong>Traffic Distribution:</strong></p>
             <ul style="margin-left: 20px;">

@@ -89,6 +89,10 @@ const MAVEN_RATIO = parseFloat(__ENV.MAVEN_RATIO || '{{ maven_ratio }}');
 // Top 100 packages per ecosystem (known to exist)
 const PACKAGE_SEEDS = {{ package_seeds | tojson }};
 
+// Pre-fetched metadata (if available)
+const USE_PREFETCHED_METADATA = {{ use_prefetched_metadata | tojson }};
+const PREFETCHED_METADATA = {{ pre_fetched_metadata | tojson }};
+
 // Helper functions
 function randomChoice(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -250,6 +254,7 @@ export function setup() {
   console.log(`Cache Hit %:          ${CACHE_HIT_PERCENTAGE}%`);
   console.log(`Metadata Only:        ${METADATA_ONLY}`);
   console.log(`Enabled Ecosystems:   ${ECOSYSTEMS.join(', ')}`);
+  console.log(`Using Prefetched:     ${USE_PREFETCHED_METADATA}`);
   console.log('');
   console.log('Registry URLs:');
   if (ECOSYSTEMS.includes('npm')) {
@@ -277,18 +282,12 @@ export function setup() {
   console.log(`  Metadata requests:  ${METADATA_ONLY ? '100%' : '40%'}`);
   console.log(`  Download requests:  ${METADATA_ONLY ? '0%' : '60%'}`);
   console.log('='.repeat(60));
-  console.log('');
-  console.log('SETUP: Fetching real package versions from registries...');
-  console.log('This may take 5-10 minutes for 260+ packages...');
-  console.log('='.repeat(60));
   
   const database = {
     npm: [],
     pypi: [],
     maven: []
   };
-  
-  const startTime = new Date();
   
   // Store configuration in database for report
   database.config = {
@@ -310,59 +309,94 @@ export function setup() {
     timestamp: new Date().toISOString()
   };
   
-  // Fetch packages for enabled ecosystems only
-  if (ECOSYSTEMS.includes('npm') && PACKAGE_SEEDS.npm) {
-    console.log(`\\nFetching versions for ${PACKAGE_SEEDS.npm.length} npm packages...`);
-    let count = 0;
-    for (const pkg of PACKAGE_SEEDS.npm) {
-      const versions = fetchNpmVersions(pkg);
-      database.npm.push({ name: pkg, versions: versions });
-      count++;
-      if (count % 20 === 0) {
-        const elapsed = Math.floor((new Date() - startTime) / 1000);
-        console.log(`  npm: ${count}/${PACKAGE_SEEDS.npm.length} (${elapsed}s elapsed)`);
+  // Use pre-fetched metadata if available, otherwise fetch from registries
+  if (USE_PREFETCHED_METADATA) {
+    console.log('');
+    console.log('Using pre-fetched metadata from Python script...');
+    console.log('='.repeat(60));
+    
+    // Load pre-fetched metadata directly
+    if (PREFETCHED_METADATA.npm) {
+      database.npm = PREFETCHED_METADATA.npm;
+      console.log(`  ✓ Loaded ${database.npm.length} npm packages from cache`);
+    }
+    if (PREFETCHED_METADATA.pypi) {
+      database.pypi = PREFETCHED_METADATA.pypi;
+      console.log(`  ✓ Loaded ${database.pypi.length} PyPI packages from cache`);
+    }
+    if (PREFETCHED_METADATA.maven) {
+      database.maven = PREFETCHED_METADATA.maven;
+      console.log(`  ✓ Loaded ${database.maven.length} Maven packages from cache`);
+    }
+    
+    console.log('='.repeat(60));
+    console.log('SETUP COMPLETE! (using cached metadata)');
+    console.log(`  npm packages:   ${database.npm.length} (${database.npm.reduce((sum, p) => sum + p.versions.length, 0)} versions)`);
+    console.log(`  pypi packages:  ${database.pypi.length} (${database.pypi.reduce((sum, p) => sum + p.versions.length, 0)} versions)`);
+    console.log(`  maven packages: ${database.maven.length} (${database.maven.reduce((sum, p) => sum + p.versions.length, 0)} versions)`);
+    console.log('='.repeat(60));
+  } else {
+    console.log('');
+    console.log('SETUP: Fetching real package versions from registries...');
+    console.log('This may take 5-10 minutes for 260+ packages...');
+    console.log('='.repeat(60));
+    
+    const startTime = new Date();
+    
+    // Fetch packages for enabled ecosystems only
+    if (ECOSYSTEMS.includes('npm') && PACKAGE_SEEDS.npm) {
+      console.log(`\\nFetching versions for ${PACKAGE_SEEDS.npm.length} npm packages...`);
+      let count = 0;
+      for (const pkg of PACKAGE_SEEDS.npm) {
+        const versions = fetchNpmVersions(pkg);
+        database.npm.push({ name: pkg, versions: versions });
+        count++;
+        if (count % 20 === 0) {
+          const elapsed = Math.floor((new Date() - startTime) / 1000);
+          console.log(`  npm: ${count}/${PACKAGE_SEEDS.npm.length} (${elapsed}s elapsed)`);
+        }
       }
     }
-  }
-  
-  if (ECOSYSTEMS.includes('pypi') && PACKAGE_SEEDS.pypi) {
-    console.log(`\\nFetching versions for ${PACKAGE_SEEDS.pypi.length} PyPI packages...`);
-    let count = 0;
-    for (const pkg of PACKAGE_SEEDS.pypi) {
-      const versions = fetchPypiVersions(pkg);
-      database.pypi.push({ name: pkg, versions: versions });
-      count++;
-      if (count % 20 === 0) {
-        const elapsed = Math.floor((new Date() - startTime) / 1000);
-        console.log(`  pypi: ${count}/${PACKAGE_SEEDS.pypi.length} (${elapsed}s elapsed)`);
+    
+    if (ECOSYSTEMS.includes('pypi') && PACKAGE_SEEDS.pypi) {
+      console.log(`\\nFetching versions for ${PACKAGE_SEEDS.pypi.length} PyPI packages...`);
+      let count = 0;
+      for (const pkg of PACKAGE_SEEDS.pypi) {
+        const versions = fetchPypiVersions(pkg);
+        database.pypi.push({ name: pkg, versions: versions });
+        count++;
+        if (count % 20 === 0) {
+          const elapsed = Math.floor((new Date() - startTime) / 1000);
+          console.log(`  pypi: ${count}/${PACKAGE_SEEDS.pypi.length} (${elapsed}s elapsed)`);
+        }
       }
     }
-  }
-  
-  if (ECOSYSTEMS.includes('maven') && PACKAGE_SEEDS.maven) {
-    console.log(`\\nFetching versions for ${PACKAGE_SEEDS.maven.length} Maven packages...`);
-    let count = 0;
-    for (const coords of PACKAGE_SEEDS.maven) {
-      const versions = fetchMavenVersions(coords);
-      const { group, artifact } = parseMavenCoords(coords);
-      database.maven.push({ group: group, artifact: artifact, versions: versions });
-      count++;
-      if (count % 20 === 0) {
-        const elapsed = Math.floor((new Date() - startTime) / 1000);
-        console.log(`  maven: ${count}/${PACKAGE_SEEDS.maven.length} (${elapsed}s elapsed)`);
+    
+    if (ECOSYSTEMS.includes('maven') && PACKAGE_SEEDS.maven) {
+      console.log(`\\nFetching versions for ${PACKAGE_SEEDS.maven.length} Maven packages...`);
+      let count = 0;
+      for (const coords of PACKAGE_SEEDS.maven) {
+        const versions = fetchMavenVersions(coords);
+        const { group, artifact } = parseMavenCoords(coords);
+        database.maven.push({ group: group, artifact: artifact, versions: versions });
+        count++;
+        if (count % 20 === 0) {
+          const elapsed = Math.floor((new Date() - startTime) / 1000);
+          console.log(`  maven: ${count}/${PACKAGE_SEEDS.maven.length} (${elapsed}s elapsed)`);
+        }
       }
     }
+    
+    const totalTime = Math.floor((new Date() - startTime) / 1000);
+    
+    console.log('='.repeat(60));
+    console.log('SETUP COMPLETE!');
+    console.log(`  Total time: ${totalTime} seconds`);
+    console.log(`  npm packages:   ${database.npm.length} (${database.npm.reduce((sum, p) => sum + p.versions.length, 0)} versions)`);
+    console.log(`  pypi packages:  ${database.pypi.length} (${database.pypi.reduce((sum, p) => sum + p.versions.length, 0)} versions)`);
+    console.log(`  maven packages: ${database.maven.length} (${database.maven.reduce((sum, p) => sum + p.versions.length, 0)} versions)`);
+    console.log('='.repeat(60));
   }
-  
-  const totalTime = Math.floor((new Date() - startTime) / 1000);
-  
-  console.log('='.repeat(60));
-  console.log('SETUP COMPLETE!');
-  console.log(`  Total time: ${totalTime} seconds`);
-  console.log(`  npm packages:   ${database.npm.length} (${database.npm.reduce((sum, p) => sum + p.versions.length, 0)} versions)`);
-  console.log(`  pypi packages:  ${database.pypi.length} (${database.pypi.reduce((sum, p) => sum + p.versions.length, 0)} versions)`);
-  console.log(`  maven packages: ${database.maven.length} (${database.maven.reduce((sum, p) => sum + p.versions.length, 0)} versions)`);
-  console.log('='.repeat(60));
   
   return database;
 }
@@ -751,7 +785,8 @@ export const options = {
         test_config: TestConfig,
         registries_config: RegistriesConfig,
         traffic_config: TrafficConfig,
-        package_seeds: Optional[Dict[str, list]] = None
+        package_seeds: Optional[Dict[str, list]] = None,
+        pre_fetched_metadata: Optional[Dict[str, list]] = None
     ):
         """Initialize K6Manager.
         
@@ -760,6 +795,7 @@ export const options = {
             registries_config: Registry URLs configuration
             traffic_config: Traffic distribution configuration
             package_seeds: Optional custom package seeds for each ecosystem
+            pre_fetched_metadata: Optional pre-fetched package metadata (versions, URLs)
         """
         self.test_config = test_config
         self.registries_config = registries_config
@@ -773,9 +809,18 @@ export const options = {
             if eco in all_seeds
         }
         
-        # Calculate VUs based on RPS
-        self.vus = max(test_config.rps // 10, 50)
-        self.max_vus = max(test_config.rps // 3, 100)
+        # Store pre-fetched metadata
+        self.pre_fetched_metadata = pre_fetched_metadata or {}
+        
+        # Calculate VUs based on RPS and timeout duration
+        # With 30s timeout, we need: RPS * timeout_seconds to handle blocked VUs
+        # We assume average response time of 5s for normal cases, 30s for timeouts
+        # Conservative calculation: allocate VUs for 15s average (handles mix of fast + timeout)
+        timeout_seconds = 30
+        avg_response_time = 15  # Conservative average accounting for timeouts
+        
+        self.vus = max(test_config.rps * avg_response_time // 2, 50)
+        self.max_vus = max(test_config.rps * timeout_seconds, 100)
         
     def generate_script(self, output_path: Optional[str] = None) -> str:
         """Generate k6 load test script from template.
@@ -810,6 +855,8 @@ export const options = {
                 'metadata_only': 'true' if self.traffic_config.metadata_only else 'false',
                 'package_seeds': self.package_seeds,
                 'ecosystems': self.registries_config.ecosystems,
+                'use_prefetched_metadata': len(self.pre_fetched_metadata) > 0,
+                'pre_fetched_metadata': self.pre_fetched_metadata,
                 # Authentication credentials
                 'npm_token': self.registries_config.npm_token or '',
                 'npm_username': self.registries_config.npm_username or '',

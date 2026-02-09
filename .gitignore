@@ -65,3 +65,6 @@ load-test-report-*.html
 *.json
 *.json.bak
 
+# AI instructions (project-specific documentation)
+ai-instructions.md
+

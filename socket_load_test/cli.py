@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import TestConfig, RegistriesConfig, TrafficConfig
 from .core.load.k6_wrapper import K6Manager
+from .core.metadata_fetcher import MetadataFetcher
 
 
 def test_command(args):
@@ -107,6 +108,7 @@ def test_command(args):
         print(f"  Maven URL:    {maven_url}")
     print(f"  Output Dir:   {args.output_dir}")
     print(f"  Load Gen ID:  {args.load_gen_id}")
+    print(f"  Repeat Mode:  {args.repeat}")
     
     # Display package information if verbose
     if args.verbose:
@@ -117,7 +119,6 @@ def test_command(args):
             print(f"  Source:       Default package seeds")
         
         # Get package seeds (custom or default)
-        from .core.load.k6_wrapper import K6Manager
         package_seeds = custom_packages or K6Manager.DEFAULT_PACKAGE_SEEDS
         
         for eco in selected_ecosystems:
@@ -131,6 +132,79 @@ def test_command(args):
                     print(f"    ... and {len(pkg_list) - 10} more")
     
     print()
+    
+    # Initialize metadata fetcher
+    metadata_fetcher = MetadataFetcher(output_dir=args.metadata_cache_dir)
+    pre_fetched_metadata = {}
+    
+    # Get package seeds (custom or default)
+    package_seeds = custom_packages or K6Manager.DEFAULT_PACKAGE_SEEDS
+    
+    # Prepare authentication config for metadata fetcher
+    auth_config = {
+        'npm_token': args.npm_token,
+        'npm_username': args.npm_username,
+        'npm_password': args.npm_password,
+        'pypi_token': args.pypi_token,
+        'pypi_username': args.pypi_username,
+        'pypi_password': args.pypi_password,
+        'maven_username': args.maven_username,
+        'maven_password': args.maven_password,
+    }
+    
+    # Prepare registry URLs
+    registry_urls = {}
+    if 'npm' in selected_ecosystems:
+        registry_urls['npm'] = npm_url
+    if 'pypi' in selected_ecosystems:
+        registry_urls['pypi'] = pypi_url
+    if 'maven' in selected_ecosystems:
+        registry_urls['maven'] = maven_url
+    
+    # Handle --repeat mode or fetch fresh metadata
+    if args.repeat:
+        print("\n" + "=" * 60)
+        print("REPEAT MODE: Loading cached metadata")
+        print("=" * 60)
+        
+        # Try to load cached metadata for each ecosystem
+        all_cached = True
+        for ecosystem in selected_ecosystems:
+            cached = metadata_fetcher.load_metadata(ecosystem)
+            if cached and 'metadata' in cached:
+                pre_fetched_metadata[ecosystem] = cached['metadata']
+                print(f"  ✓ Loaded {ecosystem} metadata from cache ({len(cached['metadata'])} packages)")
+            else:
+                all_cached = False
+                print(f"  ✗ No cache found for {ecosystem}")
+        
+        if not all_cached:
+            print("\n  Warning: Some metadata caches not found. Fetching fresh metadata...")
+            # Fetch missing metadata
+            missing_ecosystems = [eco for eco in selected_ecosystems if eco not in pre_fetched_metadata]
+            if missing_ecosystems:
+                fetched = metadata_fetcher.fetch_and_cache_all(
+                    ecosystems=missing_ecosystems,
+                    packages={eco: package_seeds.get(eco, []) for eco in missing_ecosystems},
+                    registry_urls=registry_urls,
+                    auth_config=auth_config,
+                    verbose=args.verbose
+                )
+                pre_fetched_metadata.update(fetched)
+        
+        print("=" * 60)
+    else:
+        # Always fetch fresh metadata (not in repeat mode)
+        print("\nFetching fresh metadata from registries...")
+        print("(This may take 5-10 minutes for 260+ packages)")
+        
+        pre_fetched_metadata = metadata_fetcher.fetch_and_cache_all(
+            ecosystems=selected_ecosystems,
+            packages={eco: package_seeds.get(eco, []) for eco in selected_ecosystems},
+            registry_urls=registry_urls,
+            auth_config=auth_config,
+            verbose=args.verbose
+        )
     
     try:
         # Create configuration objects
@@ -166,7 +240,8 @@ def test_command(args):
             test_config=test_config,
             registries_config=registries_config,
             traffic_config=traffic_config,
-            package_seeds=custom_packages
+            package_seeds=custom_packages,
+            pre_fetched_metadata=pre_fetched_metadata
         )
         
         # Generate k6 script
@@ -202,59 +277,60 @@ def test_command(args):
                 try:
                     from .core.reporting.comprehensive_report import generate_html_report as gen_report
                     import glob
+                    import re
                     
                     # Create config for report generation
                     test_configs = [{"test_id": test_id, "rps": args.rps}]
                     
-                    # Determine test duration
-                    result_files = glob.glob(f"{args.output_dir}/{test_id}_*_k6_results.json")
-                    test_type = "Test"
+                    # Parse duration from args.duration (e.g., "120s", "5m", "1h")
+                    duration_str = args.duration.lower()
                     duration_seconds = None
                     
-                    if result_files:
+                    if duration_str.endswith('s'):
+                        duration_seconds = int(duration_str[:-1])
+                    elif duration_str.endswith('m'):
+                        duration_seconds = int(duration_str[:-1]) * 60
+                    elif duration_str.endswith('h'):
+                        duration_seconds = int(duration_str[:-1]) * 3600
+                    else:
+                        # Try to parse as plain number (assume seconds)
                         try:
-                            first_ts = None
-                            last_ts = None
-                            with open(result_files[0], 'r') as f:
-                                for line in f:
-                                    try:
-                                        data = json.loads(line)
-                                        if data.get('type') == 'Point' and 'time' in data.get('data', {}):
-                                            ts = data['data']['time']
-                                            if first_ts is None:
-                                                first_ts = ts
-                                            last_ts = ts
-                                    except:
-                                        continue
-                            
-                            if first_ts and last_ts:
-                                start = datetime.fromisoformat(first_ts.replace('Z', '+00:00'))
-                                end = datetime.fromisoformat(last_ts.replace('Z', '+00:00'))
-                                duration_seconds = int((end - start).total_seconds())
-                                
-                                # Format test type based on duration
-                                if duration_seconds < 90:
-                                    test_type = f"{duration_seconds}-Second"
-                                elif duration_seconds < 3600:
-                                    minutes = int(round(duration_seconds / 60))
-                                    test_type = f"{minutes}-Minute"
-                                else:
-                                    hours = int(round(duration_seconds / 3600))
-                                    test_type = f"{hours}-Hour"
-                        except Exception as e:
-                            print(f"  Warning: Could not determine test duration: {e}")
+                            duration_seconds = int(duration_str)
+                        except:
+                            duration_seconds = 300  # Default to 5 minutes
                     
-                    # Set defaults if not detected
-                    duration_seconds = duration_seconds or 300
+                    # Use custom title if provided, otherwise generate from duration
+                    if args.title:
+                        test_type = args.title
+                    else:
+                        # Format test type based on duration
+                        if duration_seconds < 90:
+                            test_type = f"{duration_seconds}-Second"
+                        elif duration_seconds < 3600:
+                            minutes = int(round(duration_seconds / 60))
+                            test_type = f"{minutes}-Minute"
+                        else:
+                            hours = int(round(duration_seconds / 3600))
+                            test_type = f"{hours}-Hour"
+                    
+                    # Collect registry URLs from config
+                    registry_urls = {}
+                    if 'npm' in selected_ecosystems:
+                        registry_urls['npm'] = npm_url
+                    if 'pypi' in selected_ecosystems:
+                        registry_urls['pypi'] = pypi_url
+                    if 'maven' in selected_ecosystems:
+                        registry_urls['maven'] = maven_url
                     
                     # Ensure output directory exists
                     os.makedirs(args.html_report_path, exist_ok=True)
                     
-                    # Generate output file path
-                    output_file = os.path.join(args.html_report_path, f"load-test-report-{test_type.lower()}.html")
+                    # Generate output file path - sanitize title for filename
+                    safe_title = re.sub(r'[^a-zA-Z0-9-]', '-', test_type.lower())
+                    output_file = os.path.join(args.html_report_path, f"load-test-report-{safe_title}.html")
                     
                     # Generate the report
-                    gen_report(test_configs, args.output_dir, output_file, test_type, duration_seconds)
+                    gen_report(test_configs, args.output_dir, output_file, test_type, duration_seconds, registry_urls)
                     
                     print(f"  ✓ HTML report generated: {output_file}")
                     
@@ -349,7 +425,10 @@ def cli():
     test_parser.add_argument('--load-gen-id', type=str, default='gen-1', help='Load generator ID')
     test_parser.add_argument('--generate-html-report', action='store_true', help='Generate comprehensive HTML report after test completion')
     test_parser.add_argument('--html-report-path', type=str, default='./reports', help='Output directory for HTML report (default: ./reports)')
+    test_parser.add_argument('--title', type=str, help='Custom title for the HTML report (e.g., "Production Load Test")')
     test_parser.add_argument('--packages', type=str, help='JSON file with custom package lists (format: {"npm": [], "pypi": [], "maven": []})')
+    test_parser.add_argument('--repeat', action='store_true', help='Use cached metadata from previous run (saves time on repeated tests)')
+    test_parser.add_argument('--metadata-cache-dir', type=str, default='./metadata-cache', help='Directory for metadata cache files (default: ./metadata-cache)')
     test_parser.set_defaults(func=test_command)
     
     # Report command
