@@ -502,7 +502,7 @@ def generate_html_report(test_configs, results_dir, output_file, test_type="5-Mi
     all_test_data.sort(key=lambda x: x['rps'])
     
     # Generate HTML
-    html = generate_html_content(all_test_data, test_type, duration_seconds)
+    html = generate_html_content(all_test_data, test_type, duration_seconds, registry_urls)
     
     # Write file
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -511,8 +511,12 @@ def generate_html_report(test_configs, results_dir, output_file, test_type="5-Mi
     print(f"Report generated: {output_file}")
 
 
-def generate_html_content(all_test_data, test_type, duration_seconds=300):
+def generate_html_content(all_test_data, test_type, duration_seconds=300, registry_urls=None):
     """Generate HTML content for report"""
+    
+    # Set default registry URLs if not provided
+    if registry_urls is None:
+        registry_urls = {}
     
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
