@@ -325,8 +325,10 @@ def test_command(args):
                     # Ensure output directory exists
                     os.makedirs(args.html_report_path, exist_ok=True)
                     
-                    # Generate output file path - sanitize title for filename
-                    safe_title = re.sub(r'[^a-zA-Z0-9-]', '-', test_type.lower())
+                    # Generate output file path - append timestamp and sanitize title for filename
+                    timestamp = datetime.now().strftime('%Y%m%d_%H-%M-%S')
+                    report_name = f"{test_type} - {timestamp}"
+                    safe_title = re.sub(r'[^a-zA-Z0-9-]', '-', report_name.lower())
                     output_file = os.path.join(args.html_report_path, f"load-test-report-{safe_title}.html")
                     
                     # Generate the report
