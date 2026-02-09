@@ -306,13 +306,6 @@ def analyze_k6_metrics(metrics):
         stats['status_404_pct'] = 0
         stats['status_403_pct'] = 0
     
-    # Cache hit rate
-    if 'cache_hits' in metrics:
-        cache_values = [m['value'] for m in metrics['cache_hits']]
-        stats['cache_hit_rate'] = statistics.mean(cache_values) if cache_values else 0
-    else:
-        stats['cache_hit_rate'] = 0
-    
     # Bandwidth tracking using custom response_bytes Trend metric
     # Trend metrics preserve request tags (type: 'metadata' or 'download')
     if 'response_bytes' in metrics:
@@ -714,7 +707,6 @@ def generate_html_content(all_test_data, test_type, duration_seconds=300):
     
     html += '''
             <p><strong>Traffic Mix:</strong> 40% metadata requests, 60% package downloads</p>
-            <p><strong>Cache Simulation:</strong> 30% cache hits using popular packages</p>
             <p><strong>RPS Levels:</strong> ''' + ', '.join(rps_list) + ''' requests/second</p>
             <p><strong>Duration per Level:</strong> ''' + test_type + '''</p>
         </div>
@@ -757,7 +749,6 @@ def generate_html_content(all_test_data, test_type, duration_seconds=300):
             <ul style="margin-left: 20px;">
                 <li>Metadata requests: 40%</li>
                 <li>Download requests: 60%</li>
-                <li>Cache hit target: 30%</li>
             </ul>
             <p><strong>Package Selection:</strong></p>
             <ul style="margin-left: 20px;">
@@ -928,11 +919,6 @@ def generate_rps_section(test_data, duration_seconds=300):
                         <td>Timeout Rate</td>
                         <td class="{timeout_class}">{timeout_rate:.2f}%</td>
                         <td class="{timeout_class}">{'✓ Good' if timeout_rate < 1 else ('⚠ Warning' if timeout_rate < 10 else '✗ Poor')}</td>
-                    </tr>
-                    <tr>
-                        <td>Cache Hit Rate</td>
-                        <td>{k6.get('cache_hit_rate', 0) * 100:.2f}%</td>
-                        <td class="good">✓ Expected</td>
                     </tr>
                     <tr>
                         <td>Total Bandwidth</td>
