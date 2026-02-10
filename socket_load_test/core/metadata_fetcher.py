@@ -346,7 +346,7 @@ class MetadataFetcher:
             return None
         
         try:
-            with open(cache_file, 'r') as f:
+            with open(cache_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as e:
             print(f"Warning: Could not load cache file {cache_file}: {e}", file=sys.stderr)

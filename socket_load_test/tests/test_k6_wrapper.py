@@ -131,7 +131,7 @@ class TestK6Manager:
             assert os.path.exists(output_path)
             
             # Verify file content matches returned content
-            with open(output_path, 'r') as f:
+            with open(output_path, 'r', encoding='utf-8') as f:
                 file_content = f.read()
             assert file_content == script
     

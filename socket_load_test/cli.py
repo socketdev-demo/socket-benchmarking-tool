@@ -73,7 +73,7 @@ def test_command(args):
     packages = args.packages
     if packages:
         try:
-            with open(packages, 'r') as f:
+            with open(packages, 'r', encoding='utf-8') as f:
                 custom_packages = json.load(f)
             print(f"Loaded custom packages from: {packages}")
             if args.verbose:
@@ -389,6 +389,12 @@ def cli():
     if sys.stderr.encoding != 'utf-8':
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
     
+    # Parent parser for common arguments shared across all commands
+    parent_parser = argparse.ArgumentParser(add_help=False)
+    parent_parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
+    parent_parser.add_argument('--log-file', type=str, help='Path to log file')
+    parent_parser.add_argument('--config', type=str, help='Path to config file')
+    
     parser = argparse.ArgumentParser(
         description='Socket Load Test - Distributed load testing for Socket Registry Firewall',
         formatter_class=argparse.RawDescriptionHelpFormatter
@@ -396,15 +402,12 @@ def cli():
     
     # Global options
     parser.add_argument('--version', action='version', version='socket-load-test 0.1.0')
-    parser.add_argument('--config', type=str, help='Path to config file')
-    parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
-    parser.add_argument('--log-file', type=str, help='Path to log file')
     
     # Subcommands
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
     # Test command
-    test_parser = subparsers.add_parser('test', help='Run a load test')
+    test_parser = subparsers.add_parser('test', help='Run a load test', parents=[parent_parser])
     test_parser.add_argument('--no-docker', action='store_true', help='Run k6 locally without Docker')
     test_parser.add_argument('--host', type=str, help='Target firewall host')
     test_parser.add_argument('--port', type=int, default=8080, help='Target firewall port')
@@ -442,19 +445,19 @@ def cli():
     test_parser.set_defaults(func=test_command)
     
     # Report command
-    report_parser = subparsers.add_parser('report', help='Generate a report from existing test results')
+    report_parser = subparsers.add_parser('report', help='Generate a report from existing test results', parents=[parent_parser])
     report_parser.set_defaults(func=report_command)
     
     # Setup command
-    setup_parser = subparsers.add_parser('setup', help='Setup monitoring or SSH keys')
+    setup_parser = subparsers.add_parser('setup', help='Setup monitoring or SSH keys', parents=[parent_parser])
     setup_parser.set_defaults(func=setup_command)
     
     # Validate command
-    validate_parser = subparsers.add_parser('validate', help='Validate configuration and connectivity')
+    validate_parser = subparsers.add_parser('validate', help='Validate configuration and connectivity', parents=[parent_parser])
     validate_parser.set_defaults(func=validate_command)
     
     # Aggregate command
-    aggregate_parser = subparsers.add_parser('aggregate', help='Aggregate results from multiple load generators')
+    aggregate_parser = subparsers.add_parser('aggregate', help='Aggregate results from multiple load generators', parents=[parent_parser])
     aggregate_parser.set_defaults(func=aggregate_command)
     
     # Parse arguments

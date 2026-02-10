@@ -433,7 +433,7 @@ class Config:
         if not path.exists():
             raise FileNotFoundError(f"Configuration file not found: {path}")
         
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f)
         
         if not data:
@@ -460,7 +460,7 @@ class Config:
         if not path.exists():
             raise FileNotFoundError(f"Configuration file not found: {path}")
         
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
         if not data:

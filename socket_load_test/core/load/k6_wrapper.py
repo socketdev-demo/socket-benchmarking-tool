@@ -126,7 +126,7 @@ function getNpmAuthHeaders() {
 function getPypiAuthHeaders() {
   const headers = {
     'User-Agent': 'pip/23.0 CPython/3.11.0',
-    'Accept': 'text/html'
+    'Accept': 'application/json'
   };
   
   // PyPI authentication:
