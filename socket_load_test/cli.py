@@ -669,6 +669,7 @@ def cli():
     setup_parser.add_argument('--maven-password', type=str, help='Password for Maven registry basic authentication')
     setup_parser.add_argument('--packages', type=str, help='JSON file with custom package lists (format: {"npm": [], "pypi": [], "maven": []})')
     setup_parser.add_argument('--metadata-cache-dir', type=str, default='./metadata-cache', help='Directory for metadata cache files (default: ./metadata-cache)')
+    setup_parser.add_argument('--max-version-attempts', type=int, default=5, help='Maximum number of versions to try per package during validation (default: 5, stops after 5 successes if > 5)')
     setup_parser.add_argument('--no-verify-ssl', action='store_true', help='Disable SSL certificate verification (use for self-signed certificates)')
     setup_parser.set_defaults(func=setup_command)
     
