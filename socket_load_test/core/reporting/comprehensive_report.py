@@ -16,7 +16,7 @@ def parse_k6_json(filepath):
     metrics = defaultdict(list)
     timeline = defaultdict(lambda: defaultdict(list))
     
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         for line in f:
             try:
                 data = json.loads(line)
@@ -56,7 +56,7 @@ def parse_system_metrics(filepath):
     if not Path(filepath).exists():
         return metrics
     
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
             try:
                 line = line.strip()

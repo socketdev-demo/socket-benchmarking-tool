@@ -246,7 +246,7 @@ def test_command(args):
         
         # Generate k6 script
         print("Generating k6 test script...")
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False, encoding='utf-8') as f:
             script_path = f.name
             script_content = k6_manager.generate_script()
             f.write(script_content)
