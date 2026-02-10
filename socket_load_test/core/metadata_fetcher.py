@@ -94,7 +94,15 @@ class MetadataFetcher:
         for i, pkg in enumerate(packages, 1):
             try:
                 url = f"{registry_url}/{pkg}"
+                
+                if verbose:
+                    print(f"  Requesting: {url}")
+                    print(f"  Headers: {', '.join(f'{k}: {v[:10]}...' if k == 'Authorization' else f'{k}: {v}' for k, v in headers.items())}")
+                
                 response = requests.get(url, headers=headers, timeout=30, verify=self.verify_ssl)
+                
+                if verbose:
+                    print(f"  Response: {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -323,7 +331,15 @@ class MetadataFetcher:
                 
                 # Fetch maven-metadata.xml
                 url = f"{registry_url}/{group_path}/{artifact}/maven-metadata.xml"
+                
+                if verbose:
+                    print(f"  Requesting: {url}")
+                    print(f"  Headers: {', '.join(f'{k}: {v[:10]}...' if k == 'Authorization' else f'{k}: {v}' for k, v in headers.items())}")
+                
                 response = requests.get(url, headers=headers, timeout=30)
+                
+                if verbose:
+                    print(f"  Response: {response.status_code}")
                 
                 if response.status_code == 200:
                     # Parse XML to extract versions

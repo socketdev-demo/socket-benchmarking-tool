@@ -476,14 +476,17 @@ class PackageValidator:
                 )
             elif ecosystem == 'maven':
                 version = pkg_info['versions'][0] if pkg_info['versions'] else '1.0.0'
-                coords = pkg_info['name'].split(':')
-                if len(coords) != 2:
+                # Maven metadata uses 'group' and 'artifact' keys
+                group_id = pkg_info.get('group', '')
+                artifact_id = pkg_info.get('artifact', '')
+                
+                if not group_id or not artifact_id:
                     invalid_packages.append(pkg_info)
                     continue
                 
                 result = self.validate_maven_package(
-                    group_id=coords[0],
-                    artifact_id=coords[1],
+                    group_id=group_id,
+                    artifact_id=artifact_id,
                     version=version,
                     registry_url=registry_url,
                     username=auth_config.get('maven_username'),
