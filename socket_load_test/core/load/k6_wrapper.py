@@ -878,7 +878,7 @@ export const options = {
             if output_path:
                 output_file = Path(output_path)
                 output_file.parent.mkdir(parents=True, exist_ok=True)
-                output_file.write_text(script_content)
+                output_file.write_text(script_content, encoding='utf-8')
                 
             return script_content
             

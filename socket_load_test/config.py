@@ -563,7 +563,7 @@ class Config:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf-8') as f:
             yaml.dump(self.to_dict(), f, default_flow_style=False, sort_keys=False)
 
     def save_json(self, path: Union[str, Path]) -> None:
@@ -576,5 +576,5 @@ class Config:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=2)

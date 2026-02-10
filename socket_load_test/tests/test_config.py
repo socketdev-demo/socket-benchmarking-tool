@@ -294,7 +294,7 @@ class TestConfig:
         """Test loading config from YAML file."""
         with TemporaryDirectory() as tmpdir:
             yaml_file = Path(tmpdir) / "config.yaml"
-            with open(yaml_file, 'w') as f:
+            with open(yaml_file, 'w', encoding='utf-8') as f:
                 yaml.dump(valid_ssh_config_dict, f)
             
             config = Config.from_yaml(yaml_file)
@@ -306,7 +306,7 @@ class TestConfig:
         """Test loading config from JSON file."""
         with TemporaryDirectory() as tmpdir:
             json_file = Path(tmpdir) / "config.json"
-            with open(json_file, 'w') as f:
+            with open(json_file, 'w', encoding='utf-8') as f:
                 json.dump(valid_ssh_config_dict, f)
             
             config = Config.from_json(json_file)
@@ -318,7 +318,7 @@ class TestConfig:
         """Test loading config from file (YAML auto-detect)."""
         with TemporaryDirectory() as tmpdir:
             yaml_file = Path(tmpdir) / "config.yml"
-            with open(yaml_file, 'w') as f:
+            with open(yaml_file, 'w', encoding='utf-8') as f:
                 yaml.dump(valid_ssh_config_dict, f)
             
             config = Config.from_file(yaml_file)
@@ -329,7 +329,7 @@ class TestConfig:
         """Test loading config from file (JSON auto-detect)."""
         with TemporaryDirectory() as tmpdir:
             json_file = Path(tmpdir) / "config.json"
-            with open(json_file, 'w') as f:
+            with open(json_file, 'w', encoding='utf-8') as f:
                 json.dump(valid_ssh_config_dict, f)
             
             config = Config.from_file(json_file)

@@ -381,6 +381,14 @@ def aggregate_command(args):
 
 def cli():
     """Socket Load Test - Distributed load testing for Socket Registry Firewall."""
+    # Fix Windows encoding issues - ensure UTF-8 for console output
+    # This prevents 'charmap' codec errors with Unicode characters like ✓
+    import io
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    if sys.stderr.encoding != 'utf-8':
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    
     parser = argparse.ArgumentParser(
         description='Socket Load Test - Distributed load testing for Socket Registry Firewall',
         formatter_class=argparse.RawDescriptionHelpFormatter

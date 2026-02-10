@@ -325,7 +325,7 @@ class MetadataFetcher:
         if test_config:
             cache_data['test_config'] = test_config
         
-        with open(cache_file, 'w') as f:
+        with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(cache_data, f, indent=2)
         
         print(f"  ✓ Saved {ecosystem} metadata to {cache_file}")
