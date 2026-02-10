@@ -479,6 +479,7 @@ class PackageValidator:
         invalid_packages = []
         
         print(f"\nValidating {len(packages_with_versions)} {ecosystem} packages...")
+        print(f"Max version attempts per package: {self.max_version_attempts}")
         
         for i, pkg_info in enumerate(packages_with_versions, 1):
             result = None
@@ -493,7 +494,7 @@ class PackageValidator:
                 if self.verbose:
                     print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name} (trying up to {len(versions_to_try)} versions)...")
                 
-                # Try up to 5 versions until we find a valid one
+                # Try versions until we find a valid one
                 for attempt, version in enumerate(versions_to_try, 1):
                     if self.verbose and len(versions_to_try) > 1:
                         print(f"      Attempt {attempt}/{len(versions_to_try)}: {pkg_name}@{version}")
@@ -524,7 +525,7 @@ class PackageValidator:
                 if self.verbose:
                     print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name} (trying up to {len(versions_to_try)} versions)...")
                 
-                # Try up to 5 versions until we find a valid one
+                # Try versions until we find a valid one
                 for attempt, version in enumerate(versions_to_try, 1):
                     if self.verbose and len(versions_to_try) > 1:
                         print(f"      Attempt {attempt}/{len(versions_to_try)}: {pkg_name}=={version}")
@@ -563,7 +564,7 @@ class PackageValidator:
                 if self.verbose:
                     print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name} (trying up to {len(versions_to_try)} versions)...")
                 
-                # Try up to 5 versions until we find a valid one
+                # Try versions until we find a valid one
                 for attempt, version in enumerate(versions_to_try, 1):
                     if self.verbose and len(versions_to_try) > 1:
                         print(f"      Attempt {attempt}/{len(versions_to_try)}: {pkg_name}:{version}")

@@ -479,6 +479,7 @@ def setup_command(args):
     if 'maven' in selected_ecosystems:
         print(f"  Maven URL:    {maven_url}")
     print(f"  Cache Dir:    {args.metadata_cache_dir}")
+    print(f"  Max Versions: {getattr(args, 'max_version_attempts', 5)} per package")
     if args.no_verify_ssl:
         print(f"  SSL Verify:   Disabled (self-signed certs allowed)")
     print()
