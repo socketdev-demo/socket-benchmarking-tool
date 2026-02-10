@@ -5,22 +5,32 @@ and don't return 404 errors.
 """
 
 import requests
+import warnings
 from typing import Dict, List, Any, Optional, Tuple
 from base64 import b64encode
+
+# Suppress SSL warnings when verification is disabled
+from urllib3.exceptions import InsecureRequestWarning
 
 
 class PackageValidator:
     """Validates package metadata and download availability."""
     
-    def __init__(self, timeout: int = 30, verbose: bool = False):
+    def __init__(self, timeout: int = 30, verbose: bool = False, verify_ssl: bool = True):
         """Initialize package validator.
         
         Args:
             timeout: Request timeout in seconds
             verbose: Enable verbose output
+            verify_ssl: Whether to verify SSL certificates (False for self-signed certs)
         """
         self.timeout = timeout
         self.verbose = verbose
+        self.verify_ssl = verify_ssl
+        
+        # Suppress SSL warnings if verification is disabled
+        if not verify_ssl:
+            warnings.filterwarnings('ignore', category=InsecureRequestWarning)
     
     def validate_npm_package(
         self,
@@ -71,7 +81,7 @@ class PackageValidator:
         # Check metadata
         try:
             metadata_url = f"{registry_url}/{package_name}"
-            response = requests.get(metadata_url, headers=headers, timeout=self.timeout)
+            response = requests.get(metadata_url, headers=headers, timeout=self.timeout, verify=self.verify_ssl)
             result['metadata_status'] = response.status_code
             
             if response.status_code == 200:
@@ -92,7 +102,8 @@ class PackageValidator:
                                 tarball_url,
                                 headers=headers,
                                 timeout=self.timeout,
-                                allow_redirects=True
+                                allow_redirects=True,
+                                verify=self.verify_ssl
                             )
                             result['download_status'] = download_response.status_code
                             result['download_valid'] = download_response.status_code == 200
@@ -157,7 +168,7 @@ class PackageValidator:
         # Check JSON metadata
         try:
             metadata_url = f"{registry_url}/pypi/{package_name}/json"
-            response = requests.get(metadata_url, headers=headers, timeout=self.timeout)
+            response = requests.get(metadata_url, headers=headers, timeout=self.timeout, verify=self.verify_ssl)
             result['metadata_status'] = response.status_code
             
             if response.status_code == 200:
@@ -179,7 +190,8 @@ class PackageValidator:
                                     download_url,
                                     headers=headers,
                                     timeout=self.timeout,
-                                    allow_redirects=True
+                                    allow_redirects=True,
+                                    verify=self.verify_ssl
                                 )
                                 result['download_status'] = download_response.status_code
                                 result['download_valid'] = download_response.status_code == 200
@@ -243,7 +255,7 @@ class PackageValidator:
         try:
             group_path = group_id.replace('.', '/')
             metadata_url = f"{registry_url}/{group_path}/{artifact_id}/maven-metadata.xml"
-            response = requests.get(metadata_url, headers=headers, timeout=self.timeout)
+            response = requests.get(metadata_url, headers=headers, timeout=self.timeout, verify=self.verify_ssl)
             result['metadata_status'] = response.status_code
             
             if response.status_code == 200:
@@ -258,7 +270,8 @@ class PackageValidator:
                         jar_url,
                         headers=headers,
                         timeout=self.timeout,
-                        allow_redirects=True
+                        allow_redirects=True,
+                        verify=self.verify_ssl
                     )
                     result['download_status'] = download_response.status_code
                     result['download_valid'] = download_response.status_code == 200

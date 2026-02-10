@@ -8,25 +8,35 @@ import json
 import os
 import sys
 import requests
+import warnings
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
 from .package_validator import PackageValidator
 
+# Suppress SSL warnings when verification is disabled
+from urllib3.exceptions import InsecureRequestWarning
+
 
 class MetadataFetcher:
     """Fetches and caches package metadata from registries."""
     
-    def __init__(self, output_dir: str = "./metadata-cache"):
+    def __init__(self, output_dir: str = "./metadata-cache", verify_ssl: bool = True):
         """Initialize metadata fetcher.
         
         Args:
             output_dir: Directory to store metadata cache files
+            verify_ssl: Whether to verify SSL certificates (False for self-signed certs)
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.validator = PackageValidator()
+        self.verify_ssl = verify_ssl
+        self.validator = PackageValidator(verify_ssl=verify_ssl)
+        
+        # Suppress SSL warnings if verification is disabled
+        if not verify_ssl:
+            warnings.filterwarnings('ignore', category=InsecureRequestWarning)
         
     def get_cache_filename(self, ecosystem: str) -> Path:
         """Get the cache filename for an ecosystem.
@@ -83,7 +93,7 @@ class MetadataFetcher:
         for i, pkg in enumerate(packages, 1):
             try:
                 url = f"{registry_url}/{pkg}"
-                response = requests.get(url, headers=headers, timeout=30)
+                response = requests.get(url, headers=headers, timeout=30, verify=self.verify_ssl)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -166,7 +176,7 @@ class MetadataFetcher:
         for i, pkg in enumerate(packages, 1):
             try:
                 url = f"{registry_url}/pypi/{pkg}/json"
-                response = requests.get(url, headers=headers, timeout=30)
+                response = requests.get(url, headers=headers, timeout=30, verify=self.verify_ssl)
                 
                 if response.status_code == 200:
                     data = response.json()

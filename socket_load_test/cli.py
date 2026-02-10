@@ -134,7 +134,10 @@ def test_command(args):
     print()
     
     # Initialize metadata fetcher
-    metadata_fetcher = MetadataFetcher(output_dir=args.metadata_cache_dir)
+    metadata_fetcher = MetadataFetcher(
+        output_dir=args.metadata_cache_dir,
+        verify_ssl=not args.no_verify_ssl
+    )
     pre_fetched_metadata = {}
     validation_results = {}
     
@@ -470,6 +473,7 @@ def cli():
     test_parser.add_argument('--metadata-cache-dir', type=str, default='./metadata-cache', help='Directory for metadata cache files (default: ./metadata-cache)')
     test_parser.add_argument('--error-rate', type=float, default=10.0, help='Percentage of requests that should intentionally 404 (default: 10.0)')
     test_parser.add_argument('--validate-packages', action='store_true', help='Validate package downloads before test (checks for 404s)')
+    test_parser.add_argument('--no-verify-ssl', action='store_true', help='Disable SSL certificate verification (use for self-signed certificates)')
     test_parser.set_defaults(func=test_command)
     
     # Report command
