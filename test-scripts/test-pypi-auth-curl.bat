@@ -16,9 +16,9 @@ if "%URL%"=="" (
     echo.
     echo Usage: test-pypi-auth-curl.bat URL USERNAME PASSWORD
     echo.
-    echo Example:
+    echo Example (using Simple API - PEP 503):
     echo   test-pypi-auth-curl.bat ^
-    echo     "https://artifactory.example.com/artifactory/api/pypi/pypi-remote/pypi/joblib/json" ^
+    echo     "https://artifactory.example.com/artifactory/api/pypi/pypi-remote/simple/joblib/" ^
     echo     "myuser" ^
     echo     "your-password"
     echo.
@@ -26,7 +26,7 @@ if "%URL%"=="" (
     echo   set PYPI_URL=https://artifactory.example.com/artifactory/api/pypi/pypi-remote
     echo   set PYPI_USERNAME=myuser
     echo   set PYPI_PASSWORD=your-password
-    echo   test-pypi-auth-curl.bat "%%PYPI_URL%%/pypi/joblib/json" "%%PYPI_USERNAME%%" "%%PYPI_PASSWORD%%"
+    echo   test-pypi-auth-curl.bat "%%PYPI_URL%%/simple/joblib/" "%%PYPI_USERNAME%%" "%%PYPI_PASSWORD%%"
     echo.
     exit /b 1
 )

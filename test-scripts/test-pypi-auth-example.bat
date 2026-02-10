@@ -15,8 +15,8 @@ echo URL: %PYPI_URL%
 echo Username: %PYPI_USERNAME%
 echo.
 
-REM Test with a common package
-call test-pypi-auth-curl.bat "%PYPI_URL%/pypi/joblib/json" "%PYPI_USERNAME%" "%PYPI_PASSWORD%"
+REM Test with a common package using Simple API (PEP 503)
+call test-pypi-auth-curl.bat "%PYPI_URL%/simple/joblib/" "%PYPI_USERNAME%" "%PYPI_PASSWORD%"
 
 if %ERRORLEVEL% equ 0 (
     echo.

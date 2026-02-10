@@ -16,14 +16,14 @@ set PASSWORD=%3
 if "%URL%"=="" (
     echo Usage: test-pypi-auth.bat URL USERNAME PASSWORD
     echo.
-    echo Example:
-    echo   test-pypi-auth.bat "https://artifactory.example.com/artifactory/api/pypi/pypi-remote/pypi/joblib/json" "myuser" "your-password"
+    echo Example (using Simple API - PEP 503):
+    echo   test-pypi-auth.bat "https://artifactory.example.com/artifactory/api/pypi/pypi-remote/simple/joblib/" "myuser" "your-password"
     echo.
     echo Or use environment variables:
     echo   set PYPI_URL=https://...
     echo   set PYPI_USERNAME=myuser
     echo   set PYPI_PASSWORD=your-password
-    echo   test-pypi-auth.bat "%%PYPI_URL%%/pypi/joblib/json" "%%PYPI_USERNAME%%" "%%PYPI_PASSWORD%%"
+    echo   test-pypi-auth.bat "%%PYPI_URL%%/simple/joblib/" "%%PYPI_USERNAME%%" "%%PYPI_PASSWORD%%"
     exit /b 1
 )
 

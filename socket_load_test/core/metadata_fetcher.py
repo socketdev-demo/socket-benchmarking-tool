@@ -6,6 +6,7 @@ registries and caches them to files for reuse in load tests.
 
 import json
 import os
+import re
 import sys
 import requests
 import warnings
@@ -117,6 +118,7 @@ class MetadataFetcher:
                     })
                     if verbose:
                         print(f"  Warning: Could not fetch {pkg} (status {response.status_code})")
+                        print(f"           URL: {url}")
                         
             except Exception as e:
                 # Use fallback
@@ -126,6 +128,10 @@ class MetadataFetcher:
                 })
                 if verbose:
                     print(f"  Warning: Error fetching {pkg}: {e}")
+                    try:
+                        print(f"           URL: {url}")
+                    except NameError:
+                        print(f"           URL: {registry_url}/{pkg}")
         
         print(f"  ✓ Fetched metadata for {len(metadata)} npm packages")
         return metadata
@@ -138,7 +144,8 @@ class MetadataFetcher:
         username: Optional[str] = None,
         password: Optional[str] = None,
         max_versions: int = 5,
-        verbose: bool = False
+        verbose: bool = False,
+        use_json_api: bool = False
     ) -> List[Dict[str, Any]]:
         """Fetch metadata for PyPI packages.
         
@@ -150,6 +157,7 @@ class MetadataFetcher:
             password: Password for basic auth
             max_versions: Maximum number of versions to fetch per package
             verbose: Enable verbose output
+            use_json_api: Use JSON API (/pypi/{package}/json) instead of Simple API (default: False)
             
         Returns:
             List of package metadata dictionaries
@@ -160,7 +168,7 @@ class MetadataFetcher:
         # Use Accept: */* to match curl behavior (some registries like Artifactory are strict)
         headers = {
             'User-Agent': 'pip/23.0 CPython/3.11.0',
-            'Accept': '*/*'  # Changed from 'application/json' to match curl
+            'Accept': '*/*'
         }
         
         if auth_token:
@@ -172,11 +180,17 @@ class MetadataFetcher:
             credentials = b64encode(f'{username}:{password}'.encode()).decode()
             headers['Authorization'] = f'Basic {credentials}'
         
-        print(f"\nFetching metadata for {len(packages)} PyPI packages...")
+        api_type = "JSON API" if use_json_api else "Simple API"
+        print(f"\nFetching metadata for {len(packages)} PyPI packages using {api_type}...")
         
         for i, pkg in enumerate(packages, 1):
             try:
-                url = f"{registry_url}/pypi/{pkg}/json"
+                if use_json_api:
+                    # Use JSON API: /pypi/{package}/json
+                    url = f"{registry_url}/pypi/{pkg}/json"
+                else:
+                    # Use Simple API (PEP 503): /simple/{package}/
+                    url = f"{registry_url}/simple/{pkg}/"
                 
                 if verbose:
                     print(f"  Requesting: {url}")
@@ -188,8 +202,20 @@ class MetadataFetcher:
                     print(f"  Response: {response.status_code}")
                 
                 if response.status_code == 200:
-                    data = response.json()
-                    all_versions = list(data.get('releases', {}).keys())
+                    if use_json_api:
+                        # Parse JSON response
+                        data = response.json()
+                        all_versions = list(data.get('releases', {}).keys())
+                    else:
+                        # Parse HTML Simple API response
+                        # Extract versions from package filenames like: packagename-1.2.3.tar.gz, packagename-1.2.3-py3-none-any.whl
+                        html = response.text
+                        # Match package filenames and extract versions
+                        # Pattern: package-name-VERSION.tar.gz or package-name-VERSION-py*.whl
+                        version_pattern = rf'{re.escape(pkg)}-([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[a-zA-Z0-9\.\-]*)?)(?:-py|.tar.gz|.whl)'
+                        matches = re.findall(version_pattern, html, re.IGNORECASE)
+                        all_versions = sorted(set(matches), key=lambda v: [int(x) if x.isdigit() else x for x in re.split(r'(\d+)', v)])
+                    
                     versions = all_versions[-max_versions:] if len(all_versions) > max_versions else all_versions
                     
                     if not versions:
@@ -210,6 +236,7 @@ class MetadataFetcher:
                     })
                     if verbose:
                         print(f"  Warning: Could not fetch {pkg} (status {response.status_code})")
+                        print(f"           URL: {url}")
                         
             except Exception as e:
                 # Use fallback
@@ -219,6 +246,14 @@ class MetadataFetcher:
                 })
                 if verbose:
                     print(f"  Warning: Error fetching {pkg}: {e}")
+                    try:
+                        print(f"           URL: {url}")
+                    except NameError:
+                        # URL wasn't constructed yet, show what it would have been
+                        if use_json_api:
+                            print(f"           URL: {registry_url}/pypi/{pkg}/json")
+                        else:
+                            print(f"           URL: {registry_url}/simple/{pkg}/")
         
         print(f"  ✓ Fetched metadata for {len(metadata)} PyPI packages")
         return metadata
@@ -300,6 +335,7 @@ class MetadataFetcher:
                     })
                     if verbose:
                         print(f"  Warning: Could not fetch {coords} (status {response.status_code})")
+                        print(f"           URL: {url}")
                         
             except Exception as e:
                 # Use fallback
@@ -315,6 +351,16 @@ class MetadataFetcher:
                 
                 if verbose:
                     print(f"  Warning: Error fetching {coords}: {e}")
+                    try:
+                        print(f"           URL: {url}")
+                    except NameError:
+                        # URL wasn't constructed, try to construct it
+                        try:
+                            group, artifact = coords.split(':')
+                            group_path = group.replace('.', '/')
+                            print(f"           URL: {registry_url}/{group_path}/{artifact}/maven-metadata.xml")
+                        except:
+                            print(f"           Coordinates: {coords}")
         
         print(f"  ✓ Fetched metadata for {len(metadata)} Maven packages")
         return metadata
@@ -492,8 +538,11 @@ class MetadataFetcher:
                 print(f"Warning: No registry URL for {ecosystem}, skipping validation")
                 continue
             
+            # Create validator with verbose flag for this validation session
+            validator = PackageValidator(verify_ssl=self.verify_ssl, verbose=verbose)
+            
             # Validate packages
-            valid, invalid = self.validator.validate_packages(
+            valid, invalid = validator.validate_packages(
                 ecosystem=ecosystem,
                 packages_with_versions=metadata[ecosystem],
                 registry_url=registry_url,

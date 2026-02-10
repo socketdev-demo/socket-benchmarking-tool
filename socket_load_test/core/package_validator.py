@@ -4,6 +4,7 @@ This module validates packages by checking if metadata and downloads are availab
 and don't return 404 errors.
 """
 
+import re
 import requests
 import warnings
 from typing import Dict, List, Any, Optional, Tuple
@@ -75,12 +76,14 @@ class PackageValidator:
             'download_valid': False,
             'metadata_status': None,
             'download_status': None,
-            'download_url': None
+            'download_url': None,
+            'metadata_url': None
         }
         
         # Check metadata
         try:
             metadata_url = f"{registry_url}/{package_name}"
+            result['metadata_url'] = metadata_url
             response = requests.get(metadata_url, headers=headers, timeout=self.timeout, verify=self.verify_ssl)
             result['metadata_status'] = response.status_code
             
@@ -125,7 +128,8 @@ class PackageValidator:
         registry_url: str,
         auth_token: Optional[str] = None,
         username: Optional[str] = None,
-        password: Optional[str] = None
+        password: Optional[str] = None,
+        use_json_api: bool = False
     ) -> Dict[str, Any]:
         """Validate PyPI package metadata and download.
         
@@ -136,6 +140,7 @@ class PackageValidator:
             auth_token: Token for authentication
             username: Username for basic auth
             password: Password for basic auth
+            use_json_api: Use JSON API (/pypi/{package}/json) instead of Simple API (default: False)
             
         Returns:
             Dict with validation results
@@ -145,7 +150,7 @@ class PackageValidator:
         # Use Accept: */* to match curl behavior (some registries like Artifactory are strict)
         headers = {
             'User-Agent': 'pip/23.0 CPython/3.11.0',
-            'Accept': '*/*'  # Changed from 'application/json' to match curl
+            'Accept': '*/*'
         }
         
         if auth_token:
@@ -163,44 +168,95 @@ class PackageValidator:
             'download_valid': False,
             'metadata_status': None,
             'download_status': None,
-            'download_url': None
+            'download_url': None,
+            'metadata_url': None
         }
         
-        # Check JSON metadata
+        # Check metadata
         try:
-            metadata_url = f"{registry_url}/pypi/{package_name}/json"
+            if use_json_api:
+                # Use JSON API: /pypi/{package}/json
+                metadata_url = f"{registry_url}/pypi/{package_name}/json"
+            else:
+                # Use Simple API (PEP 503): /simple/{package}/
+                metadata_url = f"{registry_url}/simple/{package_name}/"
+            
+            result['metadata_url'] = metadata_url
+            
             response = requests.get(metadata_url, headers=headers, timeout=self.timeout, verify=self.verify_ssl)
             result['metadata_status'] = response.status_code
             
             if response.status_code == 200:
                 result['metadata_valid'] = True
-                data = response.json()
                 
-                # Extract download URL from metadata
-                releases = data.get('releases', {})
-                if version in releases and releases[version]:
-                    # Get first wheel or source distribution URL
-                    for file_info in releases[version]:
-                        download_url = file_info.get('url')
-                        if download_url:
-                            result['download_url'] = download_url
-                            
-                            # Validate download URL
-                            try:
-                                download_response = requests.head(
-                                    download_url,
-                                    headers=headers,
-                                    timeout=self.timeout,
-                                    allow_redirects=True,
-                                    verify=self.verify_ssl
-                                )
-                                result['download_status'] = download_response.status_code
-                                result['download_valid'] = download_response.status_code == 200
-                                break  # Only check one file
-                            except Exception as e:
-                                if self.verbose:
-                                    print(f"    Warning: Download check failed for {package_name}@{version}: {e}")
-                                result['download_status'] = 0
+                if use_json_api:
+                    # Parse JSON response
+                    data = response.json()
+                    releases = data.get('releases', {})
+                    if version in releases and releases[version]:
+                        # Get first wheel or source distribution URL
+                        for file_info in releases[version]:
+                            download_url = file_info.get('url')
+                            if download_url:
+                                result['download_url'] = download_url
+                                
+                                # Validate download URL
+                                try:
+                                    download_response = requests.head(
+                                        download_url,
+                                        headers=headers,
+                                        timeout=self.timeout,
+                                        allow_redirects=True,
+                                        verify=self.verify_ssl
+                                    )
+                                    result['download_status'] = download_response.status_code
+                                    result['download_valid'] = download_response.status_code == 200
+                                    break  # Only check one file
+                                except Exception as e:
+                                    if self.verbose:
+                                        print(f"    Warning: Download check failed for {package_name}@{version}: {e}")
+                                    result['download_status'] = 0
+                else:
+                    # Parse HTML Simple API response
+                    html = response.text
+                    # Find download URLs for the specific version
+                    # Pattern: href="(url)" for files matching packagename-version.tar.gz or packagename-version-*.whl
+                    pattern = rf'href="([^"]+{re.escape(package_name)}-{re.escape(version)}[^"]*\.(tar\.gz|whl))"'
+                    matches = re.findall(pattern, html, re.IGNORECASE)
+                    
+                    if matches:
+                        # Get the first match (URL, extension)
+                        download_path = matches[0][0]
+                        
+                        # Construct full URL if path is relative
+                        if download_path.startswith('http'):
+                            download_url = download_path
+                        elif download_path.startswith('/'):
+                            # Absolute path on same server
+                            from urllib.parse import urlparse
+                            parsed = urlparse(registry_url)
+                            download_url = f"{parsed.scheme}://{parsed.netloc}{download_path}"
+                        else:
+                            # Relative path
+                            download_url = f"{registry_url}/simple/{package_name}/{download_path}"
+                        
+                        result['download_url'] = download_url
+                        
+                        # Validate download URL
+                        try:
+                            download_response = requests.head(
+                                download_url,
+                                headers=headers,
+                                timeout=self.timeout,
+                                allow_redirects=True,
+                                verify=self.verify_ssl
+                            )
+                            result['download_status'] = download_response.status_code
+                            result['download_valid'] = download_response.status_code == 200
+                        except Exception as e:
+                            if self.verbose:
+                                print(f"    Warning: Download check failed for {package_name}@{version}: {e}")
+                            result['download_status'] = 0
         except Exception as e:
             if self.verbose:
                 print(f"    Warning: Metadata check failed for {package_name}: {e}")
@@ -249,13 +305,15 @@ class PackageValidator:
             'download_valid': False,
             'metadata_status': None,
             'download_status': None,
-            'download_url': None
+            'download_url': None,
+            'metadata_url': None
         }
         
-        # Check metadata
+        # Check maven-metadata.xml
         try:
             group_path = group_id.replace('.', '/')
             metadata_url = f"{registry_url}/{group_path}/{artifact_id}/maven-metadata.xml"
+            result['metadata_url'] = metadata_url
             response = requests.get(metadata_url, headers=headers, timeout=self.timeout, verify=self.verify_ssl)
             result['metadata_status'] = response.status_code
             
@@ -361,6 +419,21 @@ class PackageValidator:
                 valid_packages.append(pkg_info)
             else:
                 invalid_packages.append(pkg_info)
+                # Show details of validation failure in verbose mode
+                if self.verbose:
+                    pkg_name = result.get('package', 'unknown')
+                    metadata_url = result.get('metadata_url')
+                    if not result['metadata_valid']:
+                        status = result.get('metadata_status', 'unknown')
+                        print(f"  ✗ {pkg_name}: metadata failed (status {status})")
+                        if metadata_url:
+                            print(f"      URL: {metadata_url}")
+                    elif not result['download_valid']:
+                        status = result.get('download_status', 'unknown')
+                        download_url = result.get('download_url', 'N/A')
+                        print(f"  ✗ {pkg_name}: download failed (status {status})")
+                        if download_url != 'N/A':
+                            print(f"      URL: {download_url}")
             
             if self.verbose and i % 10 == 0:
                 print(f"  {ecosystem}: {i}/{len(packages_with_versions)} validated")

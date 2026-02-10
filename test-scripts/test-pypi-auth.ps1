@@ -1,5 +1,5 @@
 # PyPI Authentication Test Script - Mimics K6 behavior
-# Usage: .\test-pypi-auth.ps1 -Url "https://artifactory.example.com/artifactory/api/pypi/pypi-remote/pypi/joblib/json" -Username "myuser" -Password "your-password"
+# Usage: .\test-pypi-auth.ps1 -Url "https://artifactory.example.com/artifactory/api/pypi/pypi-remote/simple/joblib/" -Username "myuser" -Password "your-password"
 
 param(
     [Parameter(Mandatory=$true)]

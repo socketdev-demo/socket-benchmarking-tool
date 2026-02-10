@@ -206,14 +206,25 @@ function fetchNpmVersions(pkg) {
 
 function fetchPypiVersions(pkg) {
   try {
-    const response = http.get(`${PYPI_BASE_URL}/pypi/${pkg}/json`, { 
+    // Use Simple API (PEP 503) by default instead of JSON API
+    const response = http.get(`${PYPI_BASE_URL}/simple/${pkg}/`, { 
       headers: getPypiAuthHeaders(),
       timeout: '30s'
     });
     if (response.status === 200) {
-      const data = JSON.parse(response.body);
-      const releases = Object.keys(data.releases || {});
-      const versions = releases.slice(Math.max(0, releases.length - 5));
+      // Parse HTML to extract versions from links
+      // Simple regex to extract version numbers from package filenames
+      const html = response.body;
+      const pattern = new RegExp(pkg + '-([0-9]+\\.[0-9]+(?:\\.[0-9]+)?[^"]*?)(?:-py|\\.tar\\.gz|\\.whl)', 'gi');
+      const matches = [];
+      let match;
+      while ((match = pattern.exec(html)) !== null) {
+        if (match[1] && !matches.includes(match[1])) {
+          matches.push(match[1]);
+        }
+      }
+      // Return last 5 versions
+      const versions = matches.slice(Math.max(0, matches.length - 5));
       return versions.length > 0 ? versions : ['1.0.0'];
     }
   } catch (e) {
@@ -742,11 +753,8 @@ export default function (data) {
         npmMetadataRequest(data);
         break;
       case 'pypi':
-        if (Math.random() < 0.5) {
-          pypiSimpleRequest(data);
-        } else {
-          pypiJsonRequest(data);
-        }
+        // Default to Simple API (PEP 503)
+        pypiSimpleRequest(data);
         break;
       case 'maven':
         mavenMetadataRequest(data);
@@ -762,11 +770,8 @@ export default function (data) {
           npmMetadataRequest(data);
           break;
         case 'pypi':
-          if (Math.random() < 0.5) {
-            pypiSimpleRequest(data);
-          } else {
-            pypiJsonRequest(data);
-          }
+          // Default to Simple API (PEP 503)
+          pypiSimpleRequest(data);
           break;
         case 'maven':
           mavenMetadataRequest(data);

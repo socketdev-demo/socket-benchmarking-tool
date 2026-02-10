@@ -11,7 +11,7 @@ def test_pypi_request(url, username, password, verbose=True):
     Test PyPI metadata request and show all request/response headers.
     
     Args:
-        url: Full URL to test (e.g., https://artifactory.example.com/artifactory/api/pypi/pypi-remote/pypi/joblib/json)
+        url: Full URL to test (e.g., https://artifactory.example.com/artifactory/api/pypi/pypi-remote/simple/joblib/)
         username: Username for basic auth
         password: Password for basic auth
         verbose: Print detailed information
@@ -138,9 +138,9 @@ def main():
     if len(sys.argv) < 4:
         print("Usage: python debug_pypi_headers.py <url> <username> <password>")
         print()
-        print("Example:")
+        print("Example (using Simple API - PEP 503):")
         print("  python debug_pypi_headers.py \\")
-        print('    "https://artifactory.example.com/artifactory/api/pypi/pypi-remote/pypi/joblib/json" \\')
+        print('    "https://artifactory.example.com/artifactory/api/pypi/pypi-remote/simple/joblib/" \\')
         print('    "myuser" \\')
         print('    "your-password"')
         sys.exit(1)
