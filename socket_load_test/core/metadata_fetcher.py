@@ -208,13 +208,29 @@ class MetadataFetcher:
                         all_versions = list(data.get('releases', {}).keys())
                     else:
                         # Parse HTML Simple API response
-                        # Extract versions from package filenames like: packagename-1.2.3.tar.gz, packagename-1.2.3-py3-none-any.whl
+                        # Extract versions from package filenames like: ../packages/flask/1.0.3/Flask-1.0.3.tar.gz
+                        # Note: Package names in URLs may have different capitalization
                         html = response.text
-                        # Match package filenames and extract versions
-                        # Pattern: package-name-VERSION.tar.gz or package-name-VERSION-py*.whl
-                        version_pattern = rf'{re.escape(pkg)}-([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[a-zA-Z0-9\.\-]*)?)(?:-py|.tar.gz|.whl)'
-                        matches = re.findall(version_pattern, html, re.IGNORECASE)
-                        all_versions = sorted(set(matches), key=lambda v: [int(x) if x.isdigit() else x for x in re.split(r'(\d+)', v)])
+                        
+                        # Match version numbers from filenames or paths
+                        # Look for patterns like: /VERSION/Package-VERSION.(tar.gz|whl)
+                        # More robust pattern that captures version from path or filename
+                        version_patterns = [
+                            # Pattern 1: Extract version from path structure: /1.0.3/Package-1.0.3.tar.gz
+                            r'/([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[a-zA-Z0-9\.\-]*)?)/[^/]+\.(?:tar\.gz|whl)',
+                            # Pattern 2: Extract from filename: Package-1.0.3.tar.gz
+                            r'-([0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[a-zA-Z0-9\.\-]*)?)\.(?:tar\.gz|whl)',
+                        ]
+                        
+                        all_versions = []
+                        for pattern in version_patterns:
+                            matches = re.findall(pattern, html, re.IGNORECASE)
+                            if matches:
+                                all_versions.extend(matches)
+                                break
+                        
+                        # Deduplicate and sort versions
+                        all_versions = sorted(set(all_versions), key=lambda v: [int(x) if x.isdigit() else x for x in re.split(r'(\d+)', v)])
                     
                     versions = all_versions[-max_versions:] if len(all_versions) > max_versions else all_versions
                     

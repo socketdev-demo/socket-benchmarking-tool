@@ -187,9 +187,32 @@ class PackageValidator:
             result['metadata_status'] = response.status_code
             
             if response.status_code == 200:
-                result['metadata_valid'] = True
+                # Check if it's a valid response or an HTML error page
+                content_type = response.headers.get('Content-Type', '').lower()
                 
-                if use_json_api:
+                # For Simple API, validate it's actually HTML with package links, not an error page
+                if not use_json_api:
+                    # Check for common error indicators in HTML
+                    html_lower = response.text.lower()
+                    is_error_page = any([
+                        '404' in html_lower and 'not found' in html_lower,
+                        '404 not found' in html_lower,
+                        'error' in html_lower and len(response.text) < 2000,  # Short error pages
+                        '<title>404' in html_lower,
+                        '<title>error' in html_lower,
+                        'page not found' in html_lower,
+                    ])
+                    
+                    if is_error_page:
+                        if self.verbose:
+                            print(f"    Server returned 200 but content appears to be an error page")
+                        result['metadata_status'] = 404  # Treat as 404
+                        result['metadata_valid'] = False
+                
+                if result.get('metadata_status') == 200:
+                    result['metadata_valid'] = True
+                
+                if use_json_api and result['metadata_valid']:
                     # Parse JSON response
                     data = response.json()
                     releases = data.get('releases', {})
@@ -219,16 +242,59 @@ class PackageValidator:
                 else:
                     # Parse HTML Simple API response
                     html = response.text
+                    
+                    if self.verbose:
+                        print(f"    Parsing Simple API response for {package_name}@{version}")
+                        print(f"    HTML length: {len(html)} bytes")
+                    
                     # Find download URLs for the specific version
-                    # Pattern: href="(url)" for files matching packagename-version.tar.gz or packagename-version-*.whl
-                    pattern = rf'href="([^"]+{re.escape(package_name)}-{re.escape(version)}[^"]*\.(tar\.gz|whl))"'
-                    matches = re.findall(pattern, html, re.IGNORECASE)
+                    # Simple API often has relative paths like: ../packages/flask/1.0.3/Flask-1.0.3.tar.gz
+                    # Note: package names in URLs may have different capitalization than the package name
+                    
+                    # Look for any link containing a file matching package-version pattern
+                    # Try multiple patterns to handle different naming conventions
+                    patterns = [
+                        # Pattern 1: Match by version in path: .../VERSION/packagename-VERSION.(tar.gz|whl)
+                        rf'href="([^"#]*/{re.escape(version)}/[^"#]*?\.(?:tar\.gz|whl))',
+                        # Pattern 2: Match filename pattern: packagename-version.(tar.gz|whl) anywhere
+                        rf'href="([^"#]*{re.escape(package_name)}-{re.escape(version)}[^"#]*?\.(?:tar\.gz|whl))',
+                        # Pattern 3: Single quotes version
+                        rf"href='([^'#]*/{re.escape(version)}/[^'#]*?\.(?:tar\.gz|whl))'",
+                        # Pattern 4: More lenient - just find href with version in filename
+                        rf'href=["\']?([^"\'>\\s#]*-{re.escape(version)}[^"\'>\\s#]*?\.(?:tar\.gz|whl))',
+                    ]
+                    
+                    matches = None
+                    for pattern in patterns:
+                        matches = re.findall(pattern, html, re.IGNORECASE)
+                        if matches:
+                            if self.verbose:
+                                print(f"    Found {len(matches)} matches with pattern")
+                            break
+                    
+                    if not matches:
+                        # Try even more lenient: any .tar.gz or .whl file for this package
+                        pattern = rf'{re.escape(package_name)}-[\d\.]+.*?\.(?:tar\.gz|whl)'
+                        filenames = re.findall(pattern, html, re.IGNORECASE)
+                        if filenames and self.verbose:
+                            print(f"    Found filenames but no download URLs: {filenames[:3]}")
+                            print(f"    Attempting to construct URLs from filenames...")
+                        # Try to find hrefs near these filenames
+                        for filename in filenames[:1]:  # Just try the first one
+                            href_pattern = rf'href=["\']?([^"\'>\s]*{re.escape(filename)}[^"\'>\s]*)'
+                            href_matches = re.findall(href_pattern, html, re.IGNORECASE)
+                            if href_matches:
+                                matches = href_matches
+                                break
                     
                     if matches:
-                        # Get the first match (URL, extension)
-                        download_path = matches[0][0]
+                        # Get the first match
+                        download_path = matches[0] if isinstance(matches[0], str) else matches[0][0] if isinstance(matches[0], tuple) else str(matches[0])
                         
-                        # Construct full URL if path is relative
+                        if self.verbose:
+                            print(f"    Download path from HTML: {download_path}")
+                        
+                        # Construct full URL from relative path
                         if download_path.startswith('http'):
                             download_url = download_path
                         elif download_path.startswith('/'):
@@ -236,11 +302,19 @@ class PackageValidator:
                             from urllib.parse import urlparse
                             parsed = urlparse(registry_url)
                             download_url = f"{parsed.scheme}://{parsed.netloc}{download_path}"
+                        elif download_path.startswith('../'):
+                            # Relative path going up - resolve relative to the simple API URL
+                            # /repository/pypi/simple/flask/ + ../packages/... = /repository/pypi/packages/...
+                            from urllib.parse import urljoin
+                            download_url = urljoin(metadata_url, download_path)
                         else:
-                            # Relative path
-                            download_url = f"{registry_url}/simple/{package_name}/{download_path}"
+                            # Relative path in same directory
+                            download_url = f"{metadata_url.rstrip('/')}/{download_path}"
                         
                         result['download_url'] = download_url
+                        
+                        if self.verbose:
+                            print(f"    Resolved download URL: {download_url}")
                         
                         # Validate download URL
                         try:
@@ -257,6 +331,13 @@ class PackageValidator:
                             if self.verbose:
                                 print(f"    Warning: Download check failed for {package_name}@{version}: {e}")
                             result['download_status'] = 0
+                    else:
+                        if self.verbose:
+                            print(f"    Warning: No download URLs found for {package_name}@{version}")
+                            # Show a snippet of the HTML for debugging
+                            snippet = html[:500] if len(html) > 500 else html
+                            print(f"    HTML snippet: {snippet}...")
+                        # download_url remains None, no download validation possible
         except Exception as e:
             if self.verbose:
                 print(f"    Warning: Metadata check failed for {package_name}: {e}")
