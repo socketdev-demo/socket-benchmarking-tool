@@ -201,6 +201,7 @@ def test_command(args):
                     packages={eco: package_seeds.get(eco, []) for eco in missing_ecosystems},
                     registry_urls=registry_urls,
                     auth_config=auth_config,
+                    max_versions=metadata_fetcher.max_version_attempts,
                     verbose=args.verbose
                 )
                 pre_fetched_metadata.update(fetched)
@@ -216,6 +217,7 @@ def test_command(args):
             packages={eco: package_seeds.get(eco, []) for eco in selected_ecosystems},
             registry_urls=registry_urls,
             auth_config=auth_config,
+            max_versions=metadata_fetcher.max_version_attempts,
             verbose=args.verbose
         )
     
@@ -522,6 +524,7 @@ def setup_command(args):
             packages={eco: package_seeds.get(eco, []) for eco in selected_ecosystems},
             registry_urls=registry_urls,
             auth_config=auth_config,
+            max_versions=metadata_fetcher.max_version_attempts,
             verbose=args.verbose
         )
         
