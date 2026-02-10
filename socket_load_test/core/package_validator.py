@@ -142,9 +142,10 @@ class PackageValidator:
         """
         registry_url = registry_url.rstrip('/')
         
+        # Use Accept: */* to match curl behavior (some registries like Artifactory are strict)
         headers = {
             'User-Agent': 'pip/23.0 CPython/3.11.0',
-            'Accept': 'application/json'
+            'Accept': '*/*'  # Changed from 'application/json' to match curl
         }
         
         if auth_token:

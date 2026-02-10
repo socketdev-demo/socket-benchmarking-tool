@@ -131,7 +131,7 @@ function getNpmAuthHeaders() {
 function getPypiAuthHeaders() {
   const headers = {
     'User-Agent': 'pip/23.0 CPython/3.11.0',
-    'Accept': 'application/json'
+    'Accept': '*/*'  // Changed from 'application/json' to match curl behavior for Artifactory compatibility
   };
   
   // PyPI authentication:
@@ -634,7 +634,7 @@ function pypiJsonRequest(data) {
   
   const startTime = Date.now();
   const response = http.get(url, {
-    headers: Object.assign(getPypiAuthHeaders(), { 'Accept': 'application/json' }),
+    headers: getPypiAuthHeaders(),  // Removed Accept override to use the default from getPypiAuthHeaders()
     timeout: '60s',
     tags: { 
       ecosystem: 'pypi', 

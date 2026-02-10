@@ -157,9 +157,10 @@ class MetadataFetcher:
         metadata = []
         registry_url = registry_url.rstrip('/')
         
+        # Use Accept: */* to match curl behavior (some registries like Artifactory are strict)
         headers = {
             'User-Agent': 'pip/23.0 CPython/3.11.0',
-            'Accept': 'application/json'
+            'Accept': '*/*'  # Changed from 'application/json' to match curl
         }
         
         if auth_token:
@@ -176,7 +177,15 @@ class MetadataFetcher:
         for i, pkg in enumerate(packages, 1):
             try:
                 url = f"{registry_url}/pypi/{pkg}/json"
+                
+                if verbose:
+                    print(f"  Requesting: {url}")
+                    print(f"  Headers: {', '.join(f'{k}: {v[:10]}...' if k == 'Authorization' else f'{k}: {v}' for k, v in headers.items())}")
+                
                 response = requests.get(url, headers=headers, timeout=30, verify=self.verify_ssl)
+                
+                if verbose:
+                    print(f"  Response: {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
