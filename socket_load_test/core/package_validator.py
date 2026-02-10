@@ -84,6 +84,10 @@ class PackageValidator:
         try:
             metadata_url = f"{registry_url}/{package_name}"
             result['metadata_url'] = metadata_url
+            
+            if self.verbose:
+                print(f"         Checking metadata: {metadata_url}")
+            
             response = requests.get(metadata_url, headers=headers, timeout=self.timeout, verify=self.verify_ssl)
             result['metadata_status'] = response.status_code
             
@@ -99,6 +103,9 @@ class PackageValidator:
                     if tarball_url:
                         result['download_url'] = tarball_url
                         
+                        if self.verbose:
+                            print(f"         Checking download: {tarball_url}")
+                        
                         # Validate download URL
                         try:
                             download_response = requests.head(
@@ -112,11 +119,13 @@ class PackageValidator:
                             result['download_valid'] = download_response.status_code == 200
                         except Exception as e:
                             if self.verbose:
-                                print(f"    Warning: Download check failed for {package_name}@{version}: {e}")
+                                print(f"         Warning: Download check failed for {package_name}@{version}: {e}")
                             result['download_status'] = 0
+            elif self.verbose:
+                print(f"         Metadata check returned status {response.status_code}")
         except Exception as e:
             if self.verbose:
-                print(f"    Warning: Metadata check failed for {package_name}: {e}")
+                print(f"         Warning: Metadata check failed for {package_name}: {e}")
             result['metadata_status'] = 0
         
         return result
@@ -183,6 +192,9 @@ class PackageValidator:
             
             result['metadata_url'] = metadata_url
             
+            if self.verbose:
+                print(f"         Checking metadata: {metadata_url}")
+            
             response = requests.get(metadata_url, headers=headers, timeout=self.timeout, verify=self.verify_ssl)
             result['metadata_status'] = response.status_code
             
@@ -205,7 +217,7 @@ class PackageValidator:
                     
                     if is_error_page:
                         if self.verbose:
-                            print(f"    Server returned 200 but content appears to be an error page")
+                            print(f"         Server returned 200 but content appears to be an error page")
                         result['metadata_status'] = 404  # Treat as 404
                         result['metadata_valid'] = False
                 
@@ -223,6 +235,9 @@ class PackageValidator:
                             if download_url:
                                 result['download_url'] = download_url
                                 
+                                if self.verbose:
+                                    print(f"         Checking download: {download_url}")
+                                
                                 # Validate download URL
                                 try:
                                     download_response = requests.head(
@@ -237,15 +252,15 @@ class PackageValidator:
                                     break  # Only check one file
                                 except Exception as e:
                                     if self.verbose:
-                                        print(f"    Warning: Download check failed for {package_name}@{version}: {e}")
+                                        print(f"         Warning: Download check failed for {package_name}@{version}: {e}")
                                     result['download_status'] = 0
-                else:
+                elif result['metadata_valid']:
                     # Parse HTML Simple API response
                     html = response.text
                     
                     if self.verbose:
-                        print(f"    Parsing Simple API response for {package_name}@{version}")
-                        print(f"    HTML length: {len(html)} bytes")
+                        print(f"         Parsing Simple API response for {package_name}@{version}")
+                        print(f"         HTML length: {len(html)} bytes")
                     
                     # Find download URLs for the specific version
                     # Simple API often has relative paths like: ../packages/flask/1.0.3/Flask-1.0.3.tar.gz
@@ -269,7 +284,7 @@ class PackageValidator:
                         matches = re.findall(pattern, html, re.IGNORECASE)
                         if matches:
                             if self.verbose:
-                                print(f"    Found {len(matches)} matches with pattern")
+                                print(f"         Found {len(matches)} matches with pattern")
                             break
                     
                     if not matches:
@@ -277,8 +292,8 @@ class PackageValidator:
                         pattern = rf'{re.escape(package_name)}-[\d\.]+.*?\.(?:tar\.gz|whl)'
                         filenames = re.findall(pattern, html, re.IGNORECASE)
                         if filenames and self.verbose:
-                            print(f"    Found filenames but no download URLs: {filenames[:3]}")
-                            print(f"    Attempting to construct URLs from filenames...")
+                            print(f"         Found filenames but no download URLs: {filenames[:3]}")
+                            print(f"         Attempting to construct URLs from filenames...")
                         # Try to find hrefs near these filenames
                         for filename in filenames[:1]:  # Just try the first one
                             href_pattern = rf'href=["\']?([^"\'>\s]*{re.escape(filename)}[^"\'>\s]*)'
@@ -292,7 +307,7 @@ class PackageValidator:
                         download_path = matches[0] if isinstance(matches[0], str) else matches[0][0] if isinstance(matches[0], tuple) else str(matches[0])
                         
                         if self.verbose:
-                            print(f"    Download path from HTML: {download_path}")
+                            print(f"         Download path from HTML: {download_path}")
                         
                         # Construct full URL from relative path
                         if download_path.startswith('http'):
@@ -314,7 +329,7 @@ class PackageValidator:
                         result['download_url'] = download_url
                         
                         if self.verbose:
-                            print(f"    Resolved download URL: {download_url}")
+                            print(f"         Checking download: {download_url}")
                         
                         # Validate download URL
                         try:
@@ -329,18 +344,20 @@ class PackageValidator:
                             result['download_valid'] = download_response.status_code == 200
                         except Exception as e:
                             if self.verbose:
-                                print(f"    Warning: Download check failed for {package_name}@{version}: {e}")
+                                print(f"         Warning: Download check failed for {package_name}@{version}: {e}")
                             result['download_status'] = 0
                     else:
                         if self.verbose:
-                            print(f"    Warning: No download URLs found for {package_name}@{version}")
+                            print(f"         Warning: No download URLs found for {package_name}@{version}")
                             # Show a snippet of the HTML for debugging
                             snippet = html[:500] if len(html) > 500 else html
-                            print(f"    HTML snippet: {snippet}...")
+                            print(f"         HTML snippet: {snippet}...")
                         # download_url remains None, no download validation possible
+            elif self.verbose:
+                print(f"         Metadata check returned status {response.status_code}")
         except Exception as e:
             if self.verbose:
-                print(f"    Warning: Metadata check failed for {package_name}: {e}")
+                print(f"         Warning: Metadata check failed for {package_name}: {e}")
             result['metadata_status'] = 0
         
         return result
@@ -395,6 +412,10 @@ class PackageValidator:
             group_path = group_id.replace('.', '/')
             metadata_url = f"{registry_url}/{group_path}/{artifact_id}/maven-metadata.xml"
             result['metadata_url'] = metadata_url
+            
+            if self.verbose:
+                print(f"         Checking metadata: {metadata_url}")
+            
             response = requests.get(metadata_url, headers=headers, timeout=self.timeout, verify=self.verify_ssl)
             result['metadata_status'] = response.status_code
             
@@ -404,6 +425,9 @@ class PackageValidator:
                 # Check download (JAR file)
                 jar_url = f"{registry_url}/{group_path}/{artifact_id}/{version}/{artifact_id}-{version}.jar"
                 result['download_url'] = jar_url
+                
+                if self.verbose:
+                    print(f"         Checking download: {jar_url}")
                 
                 try:
                     download_response = requests.head(
@@ -417,11 +441,13 @@ class PackageValidator:
                     result['download_valid'] = download_response.status_code == 200
                 except Exception as e:
                     if self.verbose:
-                        print(f"    Warning: Download check failed for {group_id}:{artifact_id}@{version}: {e}")
+                        print(f"         Warning: Download check failed for {group_id}:{artifact_id}@{version}: {e}")
                     result['download_status'] = 0
+            elif self.verbose:
+                print(f"         Metadata check returned status {response.status_code}")
         except Exception as e:
             if self.verbose:
-                print(f"    Warning: Metadata check failed for {group_id}:{artifact_id}: {e}")
+                print(f"         Warning: Metadata check failed for {group_id}:{artifact_id}: {e}")
             result['metadata_status'] = 0
         
         return result
@@ -456,8 +482,13 @@ class PackageValidator:
             if ecosystem == 'npm':
                 # Take first version to validate
                 version = pkg_info['versions'][0] if pkg_info['versions'] else 'latest'
+                pkg_name = pkg_info['name']
+                
+                if self.verbose:
+                    print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name}@{version}...")
+                
                 result = self.validate_npm_package(
-                    package_name=pkg_info['name'],
+                    package_name=pkg_name,
                     version=version,
                     registry_url=registry_url,
                     auth_token=auth_config.get('npm_token'),
@@ -466,8 +497,13 @@ class PackageValidator:
                 )
             elif ecosystem == 'pypi':
                 version = pkg_info['versions'][0] if pkg_info['versions'] else '1.0.0'
+                pkg_name = pkg_info['name']
+                
+                if self.verbose:
+                    print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name}=={version}...")
+                
                 result = self.validate_pypi_package(
-                    package_name=pkg_info['name'],
+                    package_name=pkg_name,
                     version=version,
                     registry_url=registry_url,
                     auth_token=auth_config.get('pypi_token'),
@@ -483,6 +519,10 @@ class PackageValidator:
                 if not group_id or not artifact_id:
                     invalid_packages.append(pkg_info)
                     continue
+                
+                pkg_name = f"{group_id}:{artifact_id}"
+                if self.verbose:
+                    print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name}:{version}...")
                 
                 result = self.validate_maven_package(
                     group_id=group_id,
@@ -501,25 +541,27 @@ class PackageValidator:
             # Categorize as valid or invalid
             if result['metadata_valid'] and result['download_valid']:
                 valid_packages.append(pkg_info)
+                if self.verbose:
+                    pkg_name = result.get('package', 'unknown')
+                    print(f"      ✓ {pkg_name} validated successfully")
             else:
                 invalid_packages.append(pkg_info)
                 # Show details of validation failure in verbose mode
-                if self.verbose:
-                    pkg_name = result.get('package', 'unknown')
-                    metadata_url = result.get('metadata_url')
-                    if not result['metadata_valid']:
-                        status = result.get('metadata_status', 'unknown')
-                        print(f"  ✗ {pkg_name}: metadata failed (status {status})")
-                        if metadata_url:
-                            print(f"      URL: {metadata_url}")
-                    elif not result['download_valid']:
-                        status = result.get('download_status', 'unknown')
-                        download_url = result.get('download_url', 'N/A')
-                        print(f"  ✗ {pkg_name}: download failed (status {status})")
-                        if download_url != 'N/A':
-                            print(f"      URL: {download_url}")
+                pkg_name = result.get('package', 'unknown')
+                metadata_url = result.get('metadata_url')
+                if not result['metadata_valid']:
+                    status = result.get('metadata_status', 'unknown')
+                    print(f"      ✗ {pkg_name}: metadata failed (status {status})")
+                    if self.verbose and metadata_url:
+                        print(f"         URL: {metadata_url}")
+                elif not result['download_valid']:
+                    status = result.get('download_status', 'unknown')
+                    download_url = result.get('download_url', 'N/A')
+                    print(f"      ✗ {pkg_name}: download failed (status {status})")
+                    if self.verbose and download_url != 'N/A':
+                        print(f"         URL: {download_url}")
             
-            if self.verbose and i % 10 == 0:
+            if not self.verbose and i % 10 == 0:
                 print(f"  {ecosystem}: {i}/{len(packages_with_versions)} validated")
         
         print(f"  ✓ Valid packages: {len(valid_packages)}")
