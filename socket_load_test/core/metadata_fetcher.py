@@ -336,7 +336,7 @@ class MetadataFetcher:
                     print(f"  Requesting: {url}")
                     print(f"  Headers: {', '.join(f'{k}: {v[:10]}...' if k == 'Authorization' else f'{k}: {v}' for k, v in headers.items())}")
                 
-                response = requests.get(url, headers=headers, timeout=30)
+                response = requests.get(url, headers=headers, timeout=30, verify=self.verify_ssl)
                 
                 if verbose:
                     print(f"  Response: {response.status_code}")
