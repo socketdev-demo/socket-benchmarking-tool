@@ -394,8 +394,171 @@ def report_command(args):
 
 
 def setup_command(args):
-    """Setup monitoring or SSH keys."""
-    print("Setup command - to be implemented")
+    """Setup and validate package metadata."""
+    from .core.load.k6_wrapper import K6Manager
+    
+    # Parse and validate ecosystems
+    selected_ecosystems = [e.strip().lower() for e in args.ecosystems.split(',')]
+    valid_ecosystems = ['npm', 'pypi', 'maven']
+    
+    for ecosystem in selected_ecosystems:
+        if ecosystem not in valid_ecosystems:
+            print(f"Error: Invalid ecosystem '{ecosystem}'. Must be one of: {', '.join(valid_ecosystems)}", file=sys.stderr)
+            sys.exit(1)
+    
+    if not selected_ecosystems:
+        print("Error: At least one ecosystem must be specified", file=sys.stderr)
+        sys.exit(1)
+    
+    # Handle base-url + path combinations
+    base_url = args.base_url
+    npm_url = args.npm_url
+    pypi_url = args.pypi_url
+    maven_url = args.maven_url
+    npm_path = args.npm_path
+    pypi_path = args.pypi_path
+    maven_path = args.maven_path
+    
+    if base_url and not base_url.startswith(('http://', 'https://')):
+        base_url = f"https://{base_url}"
+    
+    if base_url:
+        base_url = base_url.rstrip('/')
+        # Only build URLs from base_url + path if full URL not provided
+        if 'npm' in selected_ecosystems and not npm_url and npm_path:
+            npm_url = f"{base_url}{npm_path if npm_path.startswith('/') else '/' + npm_path}"
+        if 'pypi' in selected_ecosystems and not pypi_url and pypi_path:
+            pypi_url = f"{base_url}{pypi_path if pypi_path.startswith('/') else '/' + pypi_path}"
+        if 'maven' in selected_ecosystems and not maven_url and maven_path:
+            maven_url = f"{base_url}{maven_path if maven_path.startswith('/') else '/' + maven_path}"
+    
+    # Validate required URLs for selected ecosystems only
+    missing_urls = []
+    if 'npm' in selected_ecosystems and not npm_url:
+        missing_urls.append('npm')
+    if 'pypi' in selected_ecosystems and not pypi_url:
+        missing_urls.append('pypi')
+    if 'maven' in selected_ecosystems and not maven_url:
+        missing_urls.append('maven')
+    
+    if missing_urls:
+        print(f"Error: Missing URLs for selected ecosystems: {', '.join(missing_urls)}", file=sys.stderr)
+        print("Must provide either:", file=sys.stderr)
+        for eco in missing_urls:
+            print(f"  - --{eco}-url, OR", file=sys.stderr)
+        print(f"  - --base-url with appropriate paths (--{'-path, --'.join(missing_urls)}-path)", file=sys.stderr)
+        sys.exit(1)
+    
+    # Load custom packages if provided
+    custom_packages = None
+    packages = args.packages
+    if packages:
+        try:
+            with open(packages, 'r', encoding='utf-8') as f:
+                custom_packages = json.load(f)
+            print(f"Loaded custom packages from: {packages}")
+            if args.verbose:
+                for eco in selected_ecosystems:
+                    if eco in custom_packages:
+                        print(f"  {eco}: {len(custom_packages[eco])} packages")
+        except Exception as e:
+            print(f"Error loading packages file: {e}", file=sys.stderr)
+            sys.exit(1)
+    
+    # Get package seeds (custom or default)
+    package_seeds = custom_packages or K6Manager.DEFAULT_PACKAGE_SEEDS
+    
+    # Display configuration
+    print(f"\nSetup Configuration:")
+    print(f"  Ecosystems:   {', '.join(selected_ecosystems)}")
+    if 'npm' in selected_ecosystems:
+        print(f"  NPM URL:      {npm_url}")
+    if 'pypi' in selected_ecosystems:
+        print(f"  PyPI URL:     {pypi_url}")
+    if 'maven' in selected_ecosystems:
+        print(f"  Maven URL:    {maven_url}")
+    print(f"  Cache Dir:    {args.metadata_cache_dir}")
+    if args.no_verify_ssl:
+        print(f"  SSL Verify:   Disabled (self-signed certs allowed)")
+    print()
+    
+    # Initialize metadata fetcher
+    metadata_fetcher = MetadataFetcher(
+        output_dir=args.metadata_cache_dir,
+        verify_ssl=not args.no_verify_ssl
+    )
+    
+    # Prepare authentication config for metadata fetcher
+    auth_config = {
+        'npm_token': args.npm_token,
+        'npm_username': args.npm_username,
+        'npm_password': args.npm_password,
+        'pypi_token': args.pypi_token,
+        'pypi_username': args.pypi_username,
+        'pypi_password': args.pypi_password,
+        'maven_username': args.maven_username,
+        'maven_password': args.maven_password,
+    }
+    
+    # Prepare registry URLs
+    registry_urls = {}
+    if 'npm' in selected_ecosystems:
+        registry_urls['npm'] = npm_url
+    if 'pypi' in selected_ecosystems:
+        registry_urls['pypi'] = pypi_url
+    if 'maven' in selected_ecosystems:
+        registry_urls['maven'] = maven_url
+    
+    try:
+        # Fetch metadata
+        print("\nFetching package metadata from registries...")
+        print("(This may take 5-10 minutes for 260+ packages)")
+        
+        pre_fetched_metadata = metadata_fetcher.fetch_and_cache_all(
+            ecosystems=selected_ecosystems,
+            packages={eco: package_seeds.get(eco, []) for eco in selected_ecosystems},
+            registry_urls=registry_urls,
+            auth_config=auth_config,
+            verbose=args.verbose
+        )
+        
+        # Validate packages
+        print("\nValidating package downloads...")
+        validation_results = metadata_fetcher.validate_and_cache_packages(
+            ecosystems=selected_ecosystems,
+            metadata=pre_fetched_metadata,
+            registry_urls=registry_urls,
+            auth_config=auth_config,
+            verbose=args.verbose
+        )
+        
+        # Print summary
+        print("\n" + "=" * 60)
+        print("SETUP COMPLETE!")
+        print("=" * 60)
+        
+        for ecosystem in selected_ecosystems:
+            if ecosystem in validation_results:
+                valid_count = len(validation_results[ecosystem]['valid'])
+                invalid_count = len(validation_results[ecosystem]['invalid'])
+                total = valid_count + invalid_count
+                print(f"\n{ecosystem.upper()}:")
+                print(f"  Total packages:   {total}")
+                print(f"  ✓ Valid:          {valid_count} ({valid_count*100//total if total > 0 else 0}%)")
+                print(f"  ✗ Invalid:        {invalid_count} ({invalid_count*100//total if total > 0 else 0}%)")
+        
+        print("\n" + "=" * 60)
+        print(f"Cache files saved to: {args.metadata_cache_dir}")
+        print("\nYou can now run tests with --repeat to use these cached results!")
+        print("=" * 60)
+        
+    except Exception as e:
+        print(f"\nError during setup: {e}", file=sys.stderr)
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
 
 
 def validate_command(args):
@@ -481,7 +644,29 @@ def cli():
     report_parser.set_defaults(func=report_command)
     
     # Setup command
-    setup_parser = subparsers.add_parser('setup', help='Setup monitoring or SSH keys', parents=[parent_parser])
+    setup_parser = subparsers.add_parser('setup', help='Fetch and validate package metadata (no load test)', parents=[parent_parser])
+    setup_parser.add_argument('--ecosystems', type=str, required=True, help='Comma-separated list of ecosystems to test (npm,pypi,maven)')
+    setup_parser.add_argument('--base-url', type=str, help='Base firewall URL (use with --npm-path, --pypi-path, --maven-path)')
+    setup_parser.add_argument('--npm-path', type=str, help='Path for npm registry (e.g., /npm or /custom/npm)')
+    setup_parser.add_argument('--pypi-path', type=str, help='Path for pypi registry (e.g., /pypi or /simple)')
+    setup_parser.add_argument('--maven-path', type=str, help='Path for maven registry (e.g., /maven or /maven2)')
+    setup_parser.add_argument('--npm-url', type=str, help='Full NPM registry URL (overrides --base-url)')
+    setup_parser.add_argument('--pypi-url', type=str, help='Full PyPI registry URL (overrides --base-url)')
+    setup_parser.add_argument('--maven-url', type=str, help='Full Maven registry URL (overrides --base-url)')
+    # Authentication options for npm
+    setup_parser.add_argument('--npm-token', type=str, help='Bearer token for NPM registry authentication')
+    setup_parser.add_argument('--npm-username', type=str, help='Username for NPM registry basic authentication')
+    setup_parser.add_argument('--npm-password', type=str, help='Password for NPM registry basic authentication')
+    # Authentication options for PyPI
+    setup_parser.add_argument('--pypi-token', type=str, help='Bearer token for PyPI registry authentication')
+    setup_parser.add_argument('--pypi-username', type=str, help='Username for PyPI registry basic authentication')
+    setup_parser.add_argument('--pypi-password', type=str, help='Password for PyPI registry basic authentication')
+    # Authentication options for Maven
+    setup_parser.add_argument('--maven-username', type=str, help='Username for Maven registry basic authentication')
+    setup_parser.add_argument('--maven-password', type=str, help='Password for Maven registry basic authentication')
+    setup_parser.add_argument('--packages', type=str, help='JSON file with custom package lists (format: {"npm": [], "pypi": [], "maven": []})')
+    setup_parser.add_argument('--metadata-cache-dir', type=str, default='./metadata-cache', help='Directory for metadata cache files (default: ./metadata-cache)')
+    setup_parser.add_argument('--no-verify-ssl', action='store_true', help='Disable SSL certificate verification (use for self-signed certificates)')
     setup_parser.set_defaults(func=setup_command)
     
     # Validate command
