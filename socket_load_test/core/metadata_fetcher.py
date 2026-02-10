@@ -9,8 +9,10 @@ import os
 import sys
 import requests
 from datetime import datetime
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
+
+from .package_validator import PackageValidator
 
 
 class MetadataFetcher:
@@ -24,6 +26,7 @@ class MetadataFetcher:
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.validator = PackageValidator()
         
     def get_cache_filename(self, ecosystem: str) -> Path:
         """Get the cache filename for an ecosystem.
@@ -433,3 +436,120 @@ class MetadataFetcher:
         print("=" * 60)
         
         return all_metadata
+    
+    def validate_and_cache_packages(
+        self,
+        ecosystems: List[str],
+        metadata: Dict[str, List[Dict[str, Any]]],
+        registry_urls: Dict[str, str],
+        auth_config: Optional[Dict[str, Any]] = None,
+        verbose: bool = False
+    ) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+        """Validate packages and separate into valid and invalid.
+        
+        Args:
+            ecosystems: List of ecosystem names
+            metadata: Dictionary of metadata by ecosystem
+            registry_urls: Dictionary mapping ecosystem to registry URL
+            auth_config: Optional authentication configuration
+            verbose: Enable verbose output
+            
+        Returns:
+            Dictionary mapping ecosystem to {valid: [...], invalid: [...]}
+        """
+        auth_config = auth_config or {}
+        validation_results = {}
+        
+        print("\n" + "=" * 60)
+        print("VALIDATING PACKAGE DOWNLOADS")
+        print("=" * 60)
+        
+        for ecosystem in ecosystems:
+            if ecosystem not in metadata or not metadata[ecosystem]:
+                continue
+            
+            registry_url = registry_urls.get(ecosystem)
+            if not registry_url:
+                print(f"Warning: No registry URL for {ecosystem}, skipping validation")
+                continue
+            
+            # Validate packages
+            valid, invalid = self.validator.validate_packages(
+                ecosystem=ecosystem,
+                packages_with_versions=metadata[ecosystem],
+                registry_url=registry_url,
+                auth_config=auth_config
+            )
+            
+            validation_results[ecosystem] = {
+                'valid': valid,
+                'invalid': invalid
+            }
+            
+            # Save validation results
+            self.save_validation_results(ecosystem, validation_results[ecosystem])
+        
+        print("\n" + "=" * 60)
+        print("VALIDATION COMPLETE")
+        print("=" * 60)
+        
+        return validation_results
+    
+    def save_validation_results(
+        self,
+        ecosystem: str,
+        results: Dict[str, List[Dict[str, Any]]]
+    ) -> Path:
+        """Save validation results to cache file.
+        
+        Args:
+            ecosystem: Ecosystem name
+            results: Validation results with 'valid' and 'invalid' keys
+            
+        Returns:
+            Path to the cache file
+        """
+        cache_file = self.output_dir / f"validation_{ecosystem}.json"
+        
+        cache_data = {
+            'ecosystem': ecosystem,
+            'timestamp': datetime.now().isoformat(),
+            'valid_count': len(results['valid']),
+            'invalid_count': len(results['invalid']),
+            'valid': results['valid'],
+            'invalid': results['invalid']
+        }
+        
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f, indent=2)
+        
+        print(f"  ✓ Saved {ecosystem} validation results to {cache_file}")
+        return cache_file
+    
+    def load_validation_results(
+        self,
+        ecosystem: str
+    ) -> Optional[Dict[str, List[Dict[str, Any]]]]:
+        """Load validation results from cache file.
+        
+        Args:
+            ecosystem: Ecosystem name
+            
+        Returns:
+            Validation results dictionary or None if not found
+        """
+        cache_file = self.output_dir / f"validation_{ecosystem}.json"
+        
+        if not cache_file.exists():
+            return None
+        
+        try:
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return {
+                    'valid': data.get('valid', []),
+                    'invalid': data.get('invalid', [])
+                }
+        except Exception as e:
+            print(f"Warning: Could not load validation file {cache_file}: {e}", file=sys.stderr)
+            return None

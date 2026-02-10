@@ -136,6 +136,7 @@ def test_command(args):
     # Initialize metadata fetcher
     metadata_fetcher = MetadataFetcher(output_dir=args.metadata_cache_dir)
     pre_fetched_metadata = {}
+    validation_results = {}
     
     # Get package seeds (custom or default)
     package_seeds = custom_packages or K6Manager.DEFAULT_PACKAGE_SEEDS
@@ -164,7 +165,7 @@ def test_command(args):
     # Handle --repeat mode or fetch fresh metadata
     if args.repeat:
         print("\n" + "=" * 60)
-        print("REPEAT MODE: Loading cached metadata")
+        print("REPEAT MODE: Loading cached metadata and validation")
         print("=" * 60)
         
         # Try to load cached metadata for each ecosystem
@@ -177,6 +178,14 @@ def test_command(args):
             else:
                 all_cached = False
                 print(f"  ✗ No cache found for {ecosystem}")
+            
+            # Try to load validation results
+            validation = metadata_fetcher.load_validation_results(ecosystem)
+            if validation:
+                validation_results[ecosystem] = validation
+                print(f"  ✓ Loaded {ecosystem} validation (valid: {len(validation['valid'])}, invalid: {len(validation['invalid'])})")
+            else:
+                print(f"  ✗ No validation cache found for {ecosystem}")
         
         if not all_cached:
             print("\n  Warning: Some metadata caches not found. Fetching fresh metadata...")
@@ -201,6 +210,21 @@ def test_command(args):
         pre_fetched_metadata = metadata_fetcher.fetch_and_cache_all(
             ecosystems=selected_ecosystems,
             packages={eco: package_seeds.get(eco, []) for eco in selected_ecosystems},
+            registry_urls=registry_urls,
+            auth_config=auth_config,
+            verbose=args.verbose
+        )
+    
+    # Validate packages if requested or if validation cache doesn't exist
+    need_validation = args.validate_packages or any(
+        ecosystem not in validation_results for ecosystem in selected_ecosystems
+    )
+    
+    if need_validation:
+        print("\nValidating package downloads...")
+        validation_results = metadata_fetcher.validate_and_cache_packages(
+            ecosystems=selected_ecosystems,
+            metadata=pre_fetched_metadata,
             registry_urls=registry_urls,
             auth_config=auth_config,
             verbose=args.verbose
@@ -241,7 +265,9 @@ def test_command(args):
             registries_config=registries_config,
             traffic_config=traffic_config,
             package_seeds=custom_packages,
-            pre_fetched_metadata=pre_fetched_metadata
+            pre_fetched_metadata=pre_fetched_metadata,
+            validation_results=validation_results,
+            error_rate=args.error_rate
         )
         
         # Generate k6 script
@@ -442,6 +468,8 @@ def cli():
     test_parser.add_argument('--packages', type=str, help='JSON file with custom package lists (format: {"npm": [], "pypi": [], "maven": []})')
     test_parser.add_argument('--repeat', action='store_true', help='Use cached metadata from previous run (saves time on repeated tests)')
     test_parser.add_argument('--metadata-cache-dir', type=str, default='./metadata-cache', help='Directory for metadata cache files (default: ./metadata-cache)')
+    test_parser.add_argument('--error-rate', type=float, default=10.0, help='Percentage of requests that should intentionally 404 (default: 10.0)')
+    test_parser.add_argument('--validate-packages', action='store_true', help='Validate package downloads before test (checks for 404s)')
     test_parser.set_defaults(func=test_command)
     
     # Report command

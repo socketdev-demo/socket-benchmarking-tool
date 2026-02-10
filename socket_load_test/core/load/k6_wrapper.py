@@ -93,6 +93,11 @@ const PACKAGE_SEEDS = {{ package_seeds | tojson }};
 const USE_PREFETCHED_METADATA = {{ use_prefetched_metadata | tojson }};
 const PREFETCHED_METADATA = {{ pre_fetched_metadata | tojson }};
 
+// Validation results (if available)
+const USE_VALIDATION = {{ use_validation | tojson }};
+const VALIDATION_RESULTS = {{ validation_results | tojson }};
+const ERROR_RATE = parseFloat(__ENV.ERROR_RATE || '{{ error_rate }}');
+
 // Helper functions
 function randomChoice(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
@@ -255,6 +260,10 @@ export function setup() {
   console.log(`Metadata Only:        ${METADATA_ONLY}`);
   console.log(`Enabled Ecosystems:   ${ECOSYSTEMS.join(', ')}`);
   console.log(`Using Prefetched:     ${USE_PREFETCHED_METADATA}`);
+  console.log(`Using Validation:     ${USE_VALIDATION}`);
+  if (USE_VALIDATION) {
+    console.log(`Error Rate:           ${ERROR_RATE}%`);
+  }
   console.log('');
   console.log('Registry URLs:');
   if (ECOSYSTEMS.includes('npm')) {
@@ -309,8 +318,39 @@ export function setup() {
     timestamp: new Date().toISOString()
   };
   
-  // Use pre-fetched metadata if available, otherwise fetch from registries
-  if (USE_PREFETCHED_METADATA) {
+  // Use validation results if available (preferred), otherwise use pre-fetched metadata, or fetch from registries
+  if (USE_VALIDATION) {
+    console.log('');
+    console.log('Using validated packages from Python script...');
+    console.log('='.repeat(60));
+    
+    // Load validated packages and combine valid + invalid
+    if (VALIDATION_RESULTS.npm) {
+      const valid = VALIDATION_RESULTS.npm.valid || [];
+      const invalid = VALIDATION_RESULTS.npm.invalid || [];
+      database.npm = valid.concat(invalid);
+      console.log(`  ✓ Loaded ${database.npm.length} npm packages (${valid.length} valid, ${invalid.length} invalid)`);
+    }
+    if (VALIDATION_RESULTS.pypi) {
+      const valid = VALIDATION_RESULTS.pypi.valid || [];
+      const invalid = VALIDATION_RESULTS.pypi.invalid || [];
+      database.pypi = valid.concat(invalid);
+      console.log(`  ✓ Loaded ${database.pypi.length} PyPI packages (${valid.length} valid, ${invalid.length} invalid)`);
+    }
+    if (VALIDATION_RESULTS.maven) {
+      const valid = VALIDATION_RESULTS.maven.valid || [];
+      const invalid = VALIDATION_RESULTS.maven.invalid || [];
+      database.maven = valid.concat(invalid);
+      console.log(`  ✓ Loaded ${database.maven.length} Maven packages (${valid.length} valid, ${invalid.length} invalid)`);
+    }
+    
+    console.log('='.repeat(60));
+    console.log('SETUP COMPLETE! (using validated packages)');
+    console.log(`  npm packages:   ${database.npm.length}`);
+    console.log(`  pypi packages:  ${database.pypi.length}`);
+    console.log(`  maven packages: ${database.maven.length}`);
+    console.log('='.repeat(60));
+  } else if (USE_PREFETCHED_METADATA) {
     console.log('');
     console.log('Using pre-fetched metadata from Python script...');
     console.log('='.repeat(60));
@@ -401,8 +441,37 @@ export function setup() {
   return database;
 }
 
-// Get package based on cache hit probability
+// Get package based on cache hit probability and validation results
 function getPackage(ecosystem, data) {
+  // If validation results are available, use them to control valid/invalid packages
+  if (USE_VALIDATION && VALIDATION_RESULTS[ecosystem]) {
+    const validPackages = VALIDATION_RESULTS[ecosystem].valid || [];
+    const invalidPackages = VALIDATION_RESULTS[ecosystem].invalid || [];
+    
+    // Decide if this request should intentionally 404 based on error rate
+    const shouldError = Math.random() * 100 < ERROR_RATE;
+    
+    if (shouldError && invalidPackages.length > 0) {
+      // Select from invalid packages (will likely 404)
+      return randomChoice(invalidPackages);
+    } else if (validPackages.length > 0) {
+      // Select from valid packages
+      const rand = Math.random() * 100;
+      
+      if (rand < CACHE_HIT_PERCENTAGE) {
+        // Cache hit - pick from top 20% (most popular)
+        const topTierSize = Math.ceil(validPackages.length * 0.2);
+        const topTier = validPackages.slice(0, topTierSize);
+        return randomChoice(topTier);
+      } else {
+        // Cache miss - pick from all valid packages
+        return randomChoice(validPackages);
+      }
+    }
+    // Fall through to default logic if no valid packages
+  }
+  
+  // Default logic when validation is not available
   const packages = data[ecosystem];
   const rand = Math.random() * 100;
   
@@ -786,7 +855,9 @@ export const options = {
         registries_config: RegistriesConfig,
         traffic_config: TrafficConfig,
         package_seeds: Optional[Dict[str, list]] = None,
-        pre_fetched_metadata: Optional[Dict[str, list]] = None
+        pre_fetched_metadata: Optional[Dict[str, list]] = None,
+        validation_results: Optional[Dict[str, Dict[str, list]]] = None,
+        error_rate: float = 10.0
     ):
         """Initialize K6Manager.
         
@@ -796,6 +867,8 @@ export const options = {
             traffic_config: Traffic distribution configuration
             package_seeds: Optional custom package seeds for each ecosystem
             pre_fetched_metadata: Optional pre-fetched package metadata (versions, URLs)
+            validation_results: Optional validation results with valid/invalid packages
+            error_rate: Percentage of requests that should intentionally 404 (default: 10.0)
         """
         self.test_config = test_config
         self.registries_config = registries_config
@@ -811,6 +884,10 @@ export const options = {
         
         # Store pre-fetched metadata
         self.pre_fetched_metadata = pre_fetched_metadata or {}
+        
+        # Store validation results and error rate
+        self.validation_results = validation_results or {}
+        self.error_rate = error_rate
         
         # Calculate VUs based on RPS and timeout duration
         # With 30s timeout, we need: RPS * timeout_seconds to handle blocked VUs
@@ -857,6 +934,9 @@ export const options = {
                 'ecosystems': self.registries_config.ecosystems,
                 'use_prefetched_metadata': len(self.pre_fetched_metadata) > 0,
                 'pre_fetched_metadata': self.pre_fetched_metadata,
+                'error_rate': self.error_rate,
+                'use_validation': len(self.validation_results) > 0,
+                'validation_results': self.validation_results,
                 # Authentication credentials
                 'npm_token': self.registries_config.npm_token or '',
                 'npm_username': self.registries_config.npm_username or '',
