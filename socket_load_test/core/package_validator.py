@@ -24,7 +24,7 @@ class PackageValidator:
             timeout: Request timeout in seconds
             verbose: Enable verbose output
             verify_ssl: Whether to verify SSL certificates (False for self-signed certs)
-            max_version_attempts: Maximum number of versions to try per package (default: 5)
+            max_version_attempts: Maximum number of versions to try per package until finding a valid one (default: 5)
         """
         self.timeout = timeout
         self.verbose = verbose
@@ -477,20 +477,10 @@ class PackageValidator:
         
         valid_packages = []
         invalid_packages = []
-        success_count = 0
         
         print(f"\nValidating {len(packages_with_versions)} {ecosystem} packages...")
         
         for i, pkg_info in enumerate(packages_with_versions, 1):
-            # If max_version_attempts > 5, stop after 5 successful validations
-            if self.max_version_attempts > 5 and success_count >= 5:
-                if self.verbose:
-                    print(f"  Reached 5 successful validations with max_version_attempts={self.max_version_attempts}, stopping early")
-                print(f"  Stopping after {success_count} successful validations (max_version_attempts={self.max_version_attempts} > 5)")
-                # Add remaining packages as invalid (not validated)
-                invalid_packages.extend(packages_with_versions[i-1:])
-                break
-            
             result = None
             versions_to_try = pkg_info.get('versions', [])[:self.max_version_attempts]
             
@@ -607,7 +597,6 @@ class PackageValidator:
             # Categorize as valid or invalid
             if result['metadata_valid'] and result['download_valid']:
                 valid_packages.append(pkg_info)
-                success_count += 1
                 if self.verbose:
                     pkg_name = result.get('package', 'unknown')
                     print(f"      ✓ {pkg_name} validated successfully")

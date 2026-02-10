@@ -29,7 +29,7 @@ class MetadataFetcher:
         Args:
             output_dir: Directory to store metadata cache files
             verify_ssl: Whether to verify SSL certificates (False for self-signed certs)
-            max_version_attempts: Maximum number of versions to try per package during validation (default: 5)
+            max_version_attempts: Maximum number of versions to try per package until finding a valid one (default: 5)
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)

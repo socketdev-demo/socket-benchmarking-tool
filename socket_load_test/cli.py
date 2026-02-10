@@ -638,7 +638,7 @@ def cli():
     test_parser.add_argument('--metadata-cache-dir', type=str, default='./metadata-cache', help='Directory for metadata cache files (default: ./metadata-cache)')
     test_parser.add_argument('--error-rate', type=float, default=10.0, help='Percentage of requests that should intentionally 404 (default: 10.0)')
     test_parser.add_argument('--validate-packages', action='store_true', help='Validate package downloads before test (checks for 404s)')
-    test_parser.add_argument('--max-version-attempts', type=int, default=5, help='Maximum number of versions to try per package during validation (default: 5, stops after 5 successes if > 5)')
+    test_parser.add_argument('--max-version-attempts', type=int, default=5, help='Maximum number of versions to try per package during validation (default: 5)')
     test_parser.add_argument('--no-verify-ssl', action='store_true', help='Disable SSL certificate verification (use for self-signed certificates)')
     test_parser.set_defaults(func=test_command)
     
@@ -669,7 +669,7 @@ def cli():
     setup_parser.add_argument('--maven-password', type=str, help='Password for Maven registry basic authentication')
     setup_parser.add_argument('--packages', type=str, help='JSON file with custom package lists (format: {"npm": [], "pypi": [], "maven": []})')
     setup_parser.add_argument('--metadata-cache-dir', type=str, default='./metadata-cache', help='Directory for metadata cache files (default: ./metadata-cache)')
-    setup_parser.add_argument('--max-version-attempts', type=int, default=5, help='Maximum number of versions to try per package during validation (default: 5, stops after 5 successes if > 5)')
+    setup_parser.add_argument('--max-version-attempts', type=int, default=5, help='Maximum number of versions to try per package during validation (default: 5)')
     setup_parser.add_argument('--no-verify-ssl', action='store_true', help='Disable SSL certificate verification (use for self-signed certificates)')
     setup_parser.set_defaults(func=setup_command)
     
