@@ -23,17 +23,19 @@ from urllib3.exceptions import InsecureRequestWarning
 class MetadataFetcher:
     """Fetches and caches package metadata from registries."""
     
-    def __init__(self, output_dir: str = "./metadata-cache", verify_ssl: bool = True):
+    def __init__(self, output_dir: str = "./metadata-cache", verify_ssl: bool = True, max_version_attempts: int = 5):
         """Initialize metadata fetcher.
         
         Args:
             output_dir: Directory to store metadata cache files
             verify_ssl: Whether to verify SSL certificates (False for self-signed certs)
+            max_version_attempts: Maximum number of versions to try per package during validation (default: 5)
         """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.verify_ssl = verify_ssl
-        self.validator = PackageValidator(verify_ssl=verify_ssl)
+        self.max_version_attempts = max_version_attempts
+        self.validator = PackageValidator(verify_ssl=verify_ssl, max_version_attempts=max_version_attempts)
         
         # Suppress SSL warnings if verification is disabled
         if not verify_ssl:
@@ -571,7 +573,7 @@ class MetadataFetcher:
                 continue
             
             # Create validator with verbose flag for this validation session
-            validator = PackageValidator(verify_ssl=self.verify_ssl, verbose=verbose)
+            validator = PackageValidator(verify_ssl=self.verify_ssl, verbose=verbose, max_version_attempts=self.max_version_attempts)
             
             # Validate packages
             valid, invalid = validator.validate_packages(

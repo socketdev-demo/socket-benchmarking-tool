@@ -17,17 +17,19 @@ from urllib3.exceptions import InsecureRequestWarning
 class PackageValidator:
     """Validates package metadata and download availability."""
     
-    def __init__(self, timeout: int = 30, verbose: bool = False, verify_ssl: bool = True):
+    def __init__(self, timeout: int = 30, verbose: bool = False, verify_ssl: bool = True, max_version_attempts: int = 5):
         """Initialize package validator.
         
         Args:
             timeout: Request timeout in seconds
             verbose: Enable verbose output
             verify_ssl: Whether to verify SSL certificates (False for self-signed certs)
+            max_version_attempts: Maximum number of versions to try per package (default: 5)
         """
         self.timeout = timeout
         self.verbose = verbose
         self.verify_ssl = verify_ssl
+        self.max_version_attempts = max_version_attempts
         
         # Suppress SSL warnings if verification is disabled
         if not verify_ssl:
@@ -475,43 +477,86 @@ class PackageValidator:
         
         valid_packages = []
         invalid_packages = []
+        success_count = 0
         
         print(f"\nValidating {len(packages_with_versions)} {ecosystem} packages...")
         
         for i, pkg_info in enumerate(packages_with_versions, 1):
+            # If max_version_attempts > 5, stop after 5 successful validations
+            if self.max_version_attempts > 5 and success_count >= 5:
+                if self.verbose:
+                    print(f"  Reached 5 successful validations with max_version_attempts={self.max_version_attempts}, stopping early")
+                print(f"  Stopping after {success_count} successful validations (max_version_attempts={self.max_version_attempts} > 5)")
+                # Add remaining packages as invalid (not validated)
+                invalid_packages.extend(packages_with_versions[i-1:])
+                break
+            
+            result = None
+            versions_to_try = pkg_info.get('versions', [])[:self.max_version_attempts]
+            
             if ecosystem == 'npm':
-                # Take first version to validate
-                version = pkg_info['versions'][0] if pkg_info['versions'] else 'latest'
                 pkg_name = pkg_info['name']
                 
-                if self.verbose:
-                    print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name}@{version}...")
+                if not versions_to_try:
+                    versions_to_try = ['latest']
                 
-                result = self.validate_npm_package(
-                    package_name=pkg_name,
-                    version=version,
-                    registry_url=registry_url,
-                    auth_token=auth_config.get('npm_token'),
-                    username=auth_config.get('npm_username'),
-                    password=auth_config.get('npm_password')
-                )
+                if self.verbose:
+                    print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name} (trying up to {len(versions_to_try)} versions)...")
+                
+                # Try up to 5 versions until we find a valid one
+                for attempt, version in enumerate(versions_to_try, 1):
+                    if self.verbose and len(versions_to_try) > 1:
+                        print(f"      Attempt {attempt}/{len(versions_to_try)}: {pkg_name}@{version}")
+                    
+                    result = self.validate_npm_package(
+                        package_name=pkg_name,
+                        version=version,
+                        registry_url=registry_url,
+                        auth_token=auth_config.get('npm_token'),
+                        username=auth_config.get('npm_username'),
+                        password=auth_config.get('npm_password')
+                    )
+                    
+                    # If both metadata and download are valid, we found a good version
+                    if result['metadata_valid'] and result['download_valid']:
+                        if self.verbose and len(versions_to_try) > 1:
+                            print(f"      ✓ Found valid version: {version}")
+                        break
+                    elif self.verbose and len(versions_to_try) > 1:
+                        print(f"      ✗ Version {version} failed validation")
+                
             elif ecosystem == 'pypi':
-                version = pkg_info['versions'][0] if pkg_info['versions'] else '1.0.0'
                 pkg_name = pkg_info['name']
                 
-                if self.verbose:
-                    print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name}=={version}...")
+                if not versions_to_try:
+                    versions_to_try = ['1.0.0']
                 
-                result = self.validate_pypi_package(
-                    package_name=pkg_name,
-                    version=version,
-                    registry_url=registry_url,
-                    auth_token=auth_config.get('pypi_token'),
-                    username=auth_config.get('pypi_username'),
-                    password=auth_config.get('pypi_password')
-                )
+                if self.verbose:
+                    print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name} (trying up to {len(versions_to_try)} versions)...")
+                
+                # Try up to 5 versions until we find a valid one
+                for attempt, version in enumerate(versions_to_try, 1):
+                    if self.verbose and len(versions_to_try) > 1:
+                        print(f"      Attempt {attempt}/{len(versions_to_try)}: {pkg_name}=={version}")
+                    
+                    result = self.validate_pypi_package(
+                        package_name=pkg_name,
+                        version=version,
+                        registry_url=registry_url,
+                        auth_token=auth_config.get('pypi_token'),
+                        username=auth_config.get('pypi_username'),
+                        password=auth_config.get('pypi_password')
+                    )
+                    
+                    # If both metadata and download are valid, we found a good version
+                    if result['metadata_valid'] and result['download_valid']:
+                        if self.verbose and len(versions_to_try) > 1:
+                            print(f"      ✓ Found valid version: {version}")
+                        break
+                    elif self.verbose and len(versions_to_try) > 1:
+                        print(f"      ✗ Version {version} failed validation")
+                
             elif ecosystem == 'maven':
-                version = pkg_info['versions'][0] if pkg_info['versions'] else '1.0.0'
                 # Maven metadata uses 'group' and 'artifact' keys
                 group_id = pkg_info.get('group', '')
                 artifact_id = pkg_info.get('artifact', '')
@@ -521,18 +566,39 @@ class PackageValidator:
                     continue
                 
                 pkg_name = f"{group_id}:{artifact_id}"
-                if self.verbose:
-                    print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name}:{version}...")
                 
-                result = self.validate_maven_package(
-                    group_id=group_id,
-                    artifact_id=artifact_id,
-                    version=version,
-                    registry_url=registry_url,
-                    username=auth_config.get('maven_username'),
-                    password=auth_config.get('maven_password')
-                )
+                if not versions_to_try:
+                    versions_to_try = ['1.0.0']
+                
+                if self.verbose:
+                    print(f"  [{i}/{len(packages_with_versions)}] Validating {pkg_name} (trying up to {len(versions_to_try)} versions)...")
+                
+                # Try up to 5 versions until we find a valid one
+                for attempt, version in enumerate(versions_to_try, 1):
+                    if self.verbose and len(versions_to_try) > 1:
+                        print(f"      Attempt {attempt}/{len(versions_to_try)}: {pkg_name}:{version}")
+                    
+                    result = self.validate_maven_package(
+                        group_id=group_id,
+                        artifact_id=artifact_id,
+                        version=version,
+                        registry_url=registry_url,
+                        username=auth_config.get('maven_username'),
+                        password=auth_config.get('maven_password')
+                    )
+                    
+                    # If both metadata and download are valid, we found a good version
+                    if result['metadata_valid'] and result['download_valid']:
+                        if self.verbose and len(versions_to_try) > 1:
+                            print(f"      ✓ Found valid version: {version}")
+                        break
+                    elif self.verbose and len(versions_to_try) > 1:
+                        print(f"      ✗ Version {version} failed validation")
             else:
+                continue
+            
+            # If no result was set (unsupported ecosystem), skip this package
+            if result is None:
                 continue
             
             # Store validation result in package info
@@ -541,6 +607,7 @@ class PackageValidator:
             # Categorize as valid or invalid
             if result['metadata_valid'] and result['download_valid']:
                 valid_packages.append(pkg_info)
+                success_count += 1
                 if self.verbose:
                     pkg_name = result.get('package', 'unknown')
                     print(f"      ✓ {pkg_name} validated successfully")
