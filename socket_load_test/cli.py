@@ -242,7 +242,8 @@ def test_command(args):
             rps=args.rps,
             duration=args.duration,
             test_id=test_id,
-            no_docker=args.no_docker
+            no_docker=args.no_docker,
+            verify_ssl=not args.no_verify_ssl
         )
         
         registries_config = RegistriesConfig(
@@ -278,12 +279,19 @@ def test_command(args):
         
         # Generate k6 script
         print("Generating k6 test script...")
+        print(f"DEBUG: Maven credentials - username: {args.maven_username}, password: {'*' * len(args.maven_password) if args.maven_password else 'None'}")
         with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False, encoding='utf-8') as f:
             script_path = f.name
             script_content = k6_manager.generate_script()
             f.write(script_content)
         
         print(f"k6 script generated: {script_path}")
+        
+        # Also save to a known location for debugging
+        debug_script_path = f"./k6-script-debug-{test_id}.js"
+        with open(debug_script_path, 'w', encoding='utf-8') as debug_f:
+            debug_f.write(script_content)
+        print(f"DEBUG: Script also saved to: {debug_script_path}")
         
         # Execute k6 test
         print(f"\nStarting k6 load test...")

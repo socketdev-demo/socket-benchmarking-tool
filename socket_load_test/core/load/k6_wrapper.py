@@ -795,6 +795,7 @@ export default function (data) {
 
 export const options = {
   setupTimeout: '10m',
+  insecureSkipTLSVerify: {{ 'true' if not verify_ssl else 'false' }},
   scenarios: {
     load_test: {
       executor: 'constant-arrival-rate',
@@ -942,6 +943,7 @@ export const options = {
                 'error_rate': self.error_rate,
                 'use_validation': len(self.validation_results) > 0,
                 'validation_results': self.validation_results,
+                'verify_ssl': self.test_config.verify_ssl,
                 # Authentication credentials
                 'npm_token': self.registries_config.npm_token or '',
                 'npm_username': self.registries_config.npm_username or '',

@@ -128,6 +128,7 @@ class TestConfig:
     warmup_duration: str = "30s"
     warmup_rps_percent: int = 10
     no_docker: bool = False
+    verify_ssl: bool = True
 
     def validate(self) -> None:
         """Validate test configuration."""
